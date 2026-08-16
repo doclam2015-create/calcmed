@@ -1051,12 +1051,23 @@ Object.assign(extendedCalculators, {
     title: "New Ballard Score",
     subtitle: "Estimación de edad gestacional por seis signos neuromusculares y seis físicos",
     fields: [
-      ...["Postura", "Ventana cuadrada de muñeca", "Retroceso del brazo", "Ángulo poplíteo", "Signo de la bufanda", "Talón a oreja", "Piel", "Lanugo", "Superficie plantar", "Mama", "Ojo/oreja", "Genitales"].map((label, index) => select(label, `b${index}`, [["−1 según lámina New Ballard", "-1"], ["0", "0"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"]])),
+      select("Postura", "b0", [["0 · Brazos y piernas extendidos", "0"], ["1 · Flexión inicial leve", "1"], ["2 · Flexión moderada de extremidades", "2"], ["3 · Brazos y piernas bien flexionados", "3"], ["4 · Flexión completa", "4"]]),
+      select("Ventana cuadrada de muñeca", "b1", [["−1 · Ángulo >90°", "-1"], ["0 · 90°", "0"], ["1 · 60°", "1"], ["2 · 45°", "2"], ["3 · 30°", "3"], ["4 · 0°", "4"]]),
+      select("Retroceso del brazo", "b2", [["0 · Sin retroceso / permanece a 180°", "0"], ["1 · Retroceso lento hasta 140–180°", "1"], ["2 · Retroceso hasta 110–140°", "2"], ["3 · Retroceso hasta 90–110°", "3"], ["4 · Retroceso rápido a <90°", "4"]]),
+      select("Ángulo poplíteo", "b3", [["−1 · 180°", "-1"], ["0 · 160°", "0"], ["1 · 140°", "1"], ["2 · 120°", "2"], ["3 · 100°", "3"], ["4 · 90°", "4"], ["5 · <90°", "5"]]),
+      select("Signo de la bufanda", "b4", [["−1 · Codo más allá de la línea axilar opuesta", "-1"], ["0 · Codo en línea axilar opuesta", "0"], ["1 · Entre axila opuesta y línea media", "1"], ["2 · Codo en línea media", "2"], ["3 · Entre línea media y axila ipsilateral", "3"], ["4 · Codo antes de la axila ipsilateral", "4"]]),
+      select("Talón a oreja", "b5", [["−1 · Talón alcanza oreja, resistencia mínima", "-1"], ["0 · Muy próximo a oreja, escasa resistencia", "0"], ["1 · Próximo, resistencia leve", "1"], ["2 · Distancia intermedia, resistencia moderada", "2"], ["3 · Lejos de oreja, resistencia marcada", "3"], ["4 · Muy lejos, resistencia intensa", "4"]]),
+      select("Piel", "b6", [["−1 · Pegajosa, friable, transparente", "-1"], ["0 · Gelatinosa, roja, translúcida", "0"], ["1 · Rosada lisa, venas visibles", "1"], ["2 · Descamación superficial/erupción, pocas venas", "2"], ["3 · Grietas y áreas pálidas, venas escasas", "3"], ["4 · Apergaminada, grietas profundas, sin vasos", "4"], ["5 · Coriácea, agrietada, arrugada", "5"]]),
+      select("Lanugo", "b7", [["−1 · Ausente", "-1"], ["0 · Escaso", "0"], ["1 · Abundante", "1"], ["2 · En disminución", "2"], ["3 · Áreas calvas", "3"], ["4 · Mayormente ausente", "4"]]),
+      select("Superficie plantar", "b8", [["−2 · Talón-dedo <40 mm", "-2"], ["−1 · 40–50 mm, sin pliegues", "-1"], ["0 · >50 mm, sin pliegues", "0"], ["1 · Marcas rojas tenues", "1"], ["2 · Solo pliegue transversal anterior", "2"], ["3 · Pliegues en 2/3 anteriores", "3"], ["4 · Pliegues en toda la planta", "4"]]),
+      select("Mama", "b9", [["−1 · Imperceptible", "-1"], ["0 · Apenas perceptible", "0"], ["1 · Areola plana, sin botón", "1"], ["2 · Areola punteada, botón 1–2 mm", "2"], ["3 · Areola elevada, botón 3–4 mm", "3"], ["4 · Areola completa, botón 5–10 mm", "4"]]),
+      select("Ojo y oreja", "b10", [["−2 · Párpados fusionados firmemente", "-2"], ["−1 · Párpados fusionados laxamente", "-1"], ["0 · Ojos abiertos; pabellón plano, queda plegado", "0"], ["1 · Pabellón algo curvo, blando, retroceso lento", "1"], ["2 · Bien curvo, blando, retroceso fácil", "2"], ["3 · Formado y firme, retroceso instantáneo", "3"], ["4 · Cartílago grueso, oreja rígida", "4"]]),
+      select("Genitales según sexo", "b11", [["−1 · M: escroto plano/liso · F: clítoris prominente y labios planos", "-1"], ["0 · M: escroto vacío, rugas tenues · F: clítoris prominente, labios menores pequeños", "0"], ["1 · M: testículos en canal superior, rugas raras · F: clítoris prominente, labios menores en aumento", "1"], ["2 · M: testículos descendiendo, pocas rugas · F: labios mayores y menores igual de prominentes", "2"], ["3 · M: testículos abajo, buenas rugas · F: mayores grandes, menores pequeños", "3"], ["4 · M: testículos péndulos, rugas profundas · F: mayores cubren clítoris y menores", "4"]]),
     ],
     calculate: (v) => {
       const total = Array.from({ length: 12 }, (_, i) => n(v, `b${i}`)).reduce((a, b) => a + b, 0);
       const weeks = 24 + 0.4 * total;
-      return { value: weeks.toFixed(1), unit: "semanas", interpretation: `Puntuación total ${total}. Seleccione cada categoría usando la lámina oficial New Ballard; los valores extremos y el recién nacido enfermo requieren experiencia clínica y correlación obstétrica.` };
+      return { value: weeks.toFixed(1), unit: "semanas", interpretation: `Puntuación total ${total}. Las descripciones reproducen la escala clínica; realice cada maniobra con la técnica oficial. Los valores extremos y el recién nacido enfermo requieren experiencia y correlación obstétrica.` };
     },
     formula: "Edad gestacional (semanas) = 24 + 0,4 × puntuación total",
     source: "Ballard et al. — New Ballard Score",
@@ -1127,29 +1138,53 @@ Object.assign(extendedCalculators, {
   ),
   "Score de riesgo PIAMA": {
     title: "PIAMA: riesgo de asma en edad escolar",
-    subtitle: "Interpreta el total de la ecuación PIAMA validada; se mantienen visibles los ocho predictores originales",
+    subtitle: "Calcula el modelo PIAMA original en preescolares con sibilancias o tos nocturna sin resfrío",
     fields: [
-      num("Puntuación PIAMA validada", "score", "0–55", "15", { min: 0, max: 55, step: "1" }),
-      ...["Sexo", "Parto posmaduro", "Educación parental", "Uso de medicación inhalada por padres", "Frecuencia de sibilancias", "Sibilancias/disnea fuera de resfriados", "Infecciones respiratorias", "Eccema"].map((label, i) => select(`${label} documentado en la hoja original`, `p${i}`, [["No/ausente", "0"], ["Sí/presente", "1"]])),
+      select("Sexo", "sex", [["Femenino", "0"], ["Masculino", "4.6"]]),
+      select("Parto posmaduro", "postterm", [["No", "0"], ["Sí", "7.3"]]),
+      select("Educación media/baja en al menos un progenitor", "education", [["No", "0"], ["Sí", "4.2"]]),
+      select("Al menos un progenitor usa medicación inhalada", "parentMedication", [["No", "0"], ["Sí", "7.7"]]),
+      select("Sibilancias en el último año", "wheeze", [["Ninguna", "0"], ["1–3 episodios", "4.2"], ["≥4 episodios", "9.1"]]),
+      select("Sibilancias o disnea fuera de resfríos", "apart", [["No", "0"], ["Sí (solo evaluable a los 3–4 años)", "7.1"]]),
+      select("Infecciones respiratorias graves en el último año", "infections", [["Ninguna", "0"], ["1–2", "4.6"], ["≥3", "6.9"]]),
+      select("Diagnóstico médico de eccema y erupción presente", "eczema", [["No", "0"], ["Sí", "8.2"]]),
     ],
     calculate: (v) => {
-      const score = n(v, "score");
-      const documented = Array.from({ length: 8 }, (_, i) => v[`p${i}`] === "1").filter(Boolean).length;
-      return { value: String(score), unit: "puntos PIAMA", interpretation: `${score >= 20 ? "Riesgo aumentado" : "Por debajo del umbral publicado de 20"}. ${documented}/8 dominios predictores fueron marcados. Use la hoja/ecuación PIAMA validada para obtener el total; no convierta los ocho indicadores en una suma simple.` };
+      const score = ["sex", "postterm", "education", "parentMedication", "wheeze", "apart", "infections", "eczema"].reduce((sum, key) => sum + n(v, key), 0);
+      const category = score < 10 ? "bajo (≈3% en la cohorte original)" : score >= 30 ? "alto (≈42% en la cohorte original)" : "intermedio";
+      return { value: score.toFixed(1).replace(".", ","), unit: "puntos PIAMA", interpretation: `Riesgo ${category}. Un umbral alrededor de 20 aumenta la probabilidad de asma a los 7–8 años, pero el modelo no diagnostica asma y su generalización fuera de la cohorte PIAMA es moderada.` };
     },
-    formula: "Modelo PIAMA publicado (0–55); umbral de cribado ≥20",
+    formula: "4,6×sexo + 7,3×posmaduro + 4,2×educación + 7,7×medicación parental + sibilancias + 7,1×fuera de resfríos + infecciones + 8,2×eccema",
     source: "Caudri et al. — PIAMA asthma prediction score",
     sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/19665756/",
   },
   "Score de riesgo de exacerbación asmática": {
-    title: "Riesgo validado de exacerbación de asma",
-    subtitle: "Interpreta el resultado de la herramienta pediátrica validada de 17 preguntas",
-    fields: [num("Puntuación del cuestionario validado", "score", "0–17", "5", { min: 0, max: 17, step: "1" })],
+    title: "Asthma Exacerbation Clinical Score pediátrico",
+    subtitle: "Diecisiete puntos sobre síntomas, tratamiento, uso de salud y antecedentes",
+    fields: [
+      select("Síntomas durante ≥3 meses del último año", "months", [["No", "0"], ["Sí", "1"]]),
+      select("Síntomas precipitados por resfríos", "colds", [["No", "0"], ["Sí", "1"]]),
+      select("Síntomas precipitados por aire frío", "coldAir", [["No", "0"], ["Sí", "1"]]),
+      select("Síntomas precipitados por ejercicio", "exercise", [["No", "0"], ["Sí", "1"]]),
+      select("Síntomas precipitados por polvo", "dust", [["No", "0"], ["Sí", "1"]]),
+      select("Uso actual de agonista β₂ de acción corta", "saba", [["No", "0"], ["Sí", "1"]]),
+      select("Uso actual de corticoide inhalado", "ics", [["No", "0"], ["Sí", "1"]]),
+      select("Uso actual de antagonista de leucotrienos", "ltra", [["No", "0"], ["Sí", "1"]]),
+      select("Alguna hospitalización por asma", "hospital", [["No", "0"], ["Sí", "1"]]),
+      select("Algún ingreso en UCI por asma", "icu", [["No", "0"], ["Sí", "1"]]),
+      select("Cursos de corticoide sistémico en el último año", "steroids", [["<2", "0"], ["≥2", "1"]]),
+      select("Visitas a urgencia por asma en el último año", "er", [["<2", "0"], ["≥2", "1"]]),
+      select("Consultas médicas por asma en el último año", "doctor", [["<3", "0"], ["3–5", "1"], ["≥6", "2"]]),
+      select("Antecedente personal de eccema o fiebre del heno", "personalAtopy", [["No", "0"], ["Sí", "1"]]),
+      select("Antecedente parental de asma o atopia", "parentalAtopy", [["No", "0"], ["Sí", "1"]]),
+      select("Exposición al humo en lactancia o actual", "smoke", [["No", "0"], ["Sí", "1"]]),
+    ],
     calculate: (v) => {
-      const score = n(v, "score");
-      return { value: String(score), unit: "respuestas de riesgo", interpretation: `Mayor puntuación indica mayor probabilidad de exacerbación en los siguientes 6 meses. Registre las 17 respuestas de la versión publicada; no se asigna una categoría terapéutica no validada. Optimice control, técnica, adherencia, exposición y plan de acción según guía.` };
+      const score = ["months", "colds", "coldAir", "exercise", "dust", "saba", "ics", "ltra", "hospital", "icu", "steroids", "er", "doctor", "personalAtopy", "parentalAtopy", "smoke"].reduce((sum, key) => sum + n(v, key), 0);
+      const category = score <= 5 ? "bajo" : score >= 9 ? "alto" : "promedio";
+      return { value: String(score), unit: "puntos (0–17)", interpretation: `Riesgo ${category} en la validación original (≤5 bajo; 6–8 promedio; ≥9 alto). La escala identifica grupos de riesgo y no predice con certeza una exacerbación individual; optimice control, técnica, adherencia, exposiciones y plan de acción.` };
     },
-    formula: "Recuento de 17 indicadores del cuestionario validado; sin ponderación inventada",
+    formula: "1 punto por cada respuesta positiva; consultas médicas: 1 punto si ≥3 y 2 puntos si ≥6",
     source: "Forno et al. — Predicting asthma exacerbations in children",
     sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/20472862/",
   },
