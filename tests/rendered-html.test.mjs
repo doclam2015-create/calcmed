@@ -33,7 +33,7 @@ test("renderiza CalcMed con metadatos en español", async () => {
   const html = await response.text();
   assert.match(html, /<html lang="es"/i);
   assert.match(html, /<title>CalcMed/i);
-  assert.match(html, /Decisiones clínicas/i);
+  assert.match(html, /Calculadoras, scores, algoritmos/i);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Building your site/i);
 });
 

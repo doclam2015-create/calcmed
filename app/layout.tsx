@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   formatDetection: { telephone: false },
   openGraph: {
     title: "CalcMed",
-    description: "Decisiones clínicas, con más claridad.",
+    description: "Calculadoras, scores y referencias clínicas en español.",
     type: "website",
     images: [{ url: "/og.png", width: 1536, height: 1024, alt: "CalcMed" }],
   },

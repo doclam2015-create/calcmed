@@ -1277,7 +1277,6 @@ export default function ClinicalApp() {
             <section className="hero">
               <div className="hero-copy">
                 <div className="eyebrow"><span><Zap size={14} fill="currentColor" /> Soporte clínico rápido</span><span className="version-pill">Edición 2026</span></div>
-                <h1>Decisiones clínicas,<br /><span>con más claridad.</span></h1>
                 <p>Calculadoras, scores, algoritmos y valores de referencia reunidos en un espacio preciso, ágil y diseñado para la práctica diaria.</p>
                 <div className="hero-search">
                   <Search size={20} />
