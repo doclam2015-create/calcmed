@@ -54,6 +54,8 @@ test("incluye manifiesto, service worker e identidad de la PWA", async () => {
   assert.match(clinicalApp, /serviceWorker\.register\("\/sw\.js", \{ updateViaCache: "none" \}\)/);
   assert.match(clinicalApp, /"Conversión de corticoides": \{/);
   assert.match(clinicalApp, /NIH\/NLM LiverTox/);
+  assert.match(clinicalApp, /"IMC para la edad \(IMC\/E\)": \{/);
+  assert.match(clinicalApp, /referencia OMS 2007/);
   assert.match(clinicalApp, /FUENTES INSTITUCIONALES/);
 });
 
@@ -66,13 +68,16 @@ test("explica el significado y la utilidad después de cada resultado clínico",
   assert.match(clinicalApp, /\{result && <>.*?<ExplanationCard/s);
   assert.match(clinicalApp, /\{scoreComplete && <ExplanationCard/);
   assert.match(clinicalApp, /if \(reference\) return <>.*?<ExplanationCard/s);
+  assert.match(clinicalApp, /Checklist clínico interactivo/);
+  assert.match(clinicalApp, /functional-checklist/);
+  assert.doesNotMatch(clinicalApp, /Ficha clínica estructurada/);
 });
 
-test("conserva las 267 herramientas y las 25 categorías de las capturas", async () => {
+test("conserva las herramientas de las capturas y agrega IMC para la edad", async () => {
   const clinicalApp = await readFile(new URL("../app/clinical-app.tsx", import.meta.url), "utf8");
   const counts = extractCatalogCounts(clinicalApp);
   const expected = {
-    Crecimiento: 10, Conversiones: 3, Renal: 13, Embarazo: 4, "Cuidados críticos": 24,
+    Crecimiento: 11, Conversiones: 3, Renal: 13, Embarazo: 4, "Cuidados críticos": 24,
     Cardiovascular: 4, Fármacos: 13, "Fluidos IV": 5, "Valores sanguíneos": 15,
     Endocrinología: 5, Cirugía: 2, Polisomnografía: 3, Neurología: 8,
     "Gastro y hepatología": 60, Nutrición: 6, Neonatología: 8, Dolor: 1,
@@ -81,5 +86,5 @@ test("conserva las 267 herramientas y las 25 categorías de las capturas", async
   };
 
   assert.deepEqual(counts, expected);
-  assert.equal(Object.values(counts).reduce((total, count) => total + count, 0), 267);
+  assert.equal(Object.values(counts).reduce((total, count) => total + count, 0), 268);
 });

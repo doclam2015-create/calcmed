@@ -10,7 +10,6 @@ import {
   Calculator,
   CalendarDays,
   ChevronRight,
-  CircleHelp,
   Clock3,
   Droplets,
   FlaskConical,
@@ -31,9 +30,11 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { WHO_BMI_AGE_BOYS, WHO_BMI_AGE_GIRLS, type WhoBmiAgeLms } from "./who-bmi-age-data";
 
 type ToolKind = "calculator" | "score" | "reference" | "algorithm" | "guide";
 type Screen = "home" | "catalog" | "favorites" | "settings";
+type ThemeMode = "light" | "dark" | "auto";
 
 type ClinicalTool = {
   id: string;
@@ -54,6 +55,7 @@ type Field = {
   min?: number;
   max?: number;
   step?: string;
+  required?: boolean;
 };
 
 type CalcDefinition = {
@@ -115,7 +117,7 @@ const categoryMeta: Record<string, { icon: typeof Activity; tint: string }> = {
 
 const catalogSource: Record<string, string[]> = {
   "Crecimiento": [
-    "Tasa metabólica basal (BMR)", "Índice de masa corporal (IMC)", "Superficie corporal (BSA)",
+    "Tasa metabólica basal (BMR)", "Índice de masa corporal (IMC)", "IMC para la edad (IMC/E)", "Superficie corporal (BSA)",
     "Circunferencia cefálica", "Talla", "Peso corporal ideal", "Escala de desempeño de Lansky",
     "Talla diana por talla parental", "Predicción de talla", "Peso",
   ],
@@ -248,6 +250,7 @@ const catalogSource: Record<string, string[]> = {
 const slugify = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 function inferKind(name: string): ToolKind {
+  if (name === "Algoritmo de dosificación de antiveneno") return "algorithm";
   if (calculators[name]) return "calculator";
   if (scores[name]) return "score";
   if (referenceDefinitions[name]) return "reference";
@@ -258,7 +261,7 @@ function inferKind(name: string): ToolKind {
 }
 
 const featuredNames = new Set([
-  "Índice de masa corporal (IMC)", "Superficie corporal (BSA)", "Aclaramiento de creatinina Cockcroft–Gault",
+  "IMC para la edad (IMC/E)", "Índice de masa corporal (IMC)", "Superficie corporal (BSA)", "Aclaramiento de creatinina Cockcroft–Gault",
   "Presión arterial media (PAM)", "Score APGAR", "Escala de coma de Glasgow", "Score Child–Pugh",
   "Score MELD-Na", "Fluidos de mantenimiento", "Score Centor/McIsaac para faringitis estreptocócica",
   "Score de Bishop para inducción del parto", "Recuento absoluto de neutrófilos (RAN)",
@@ -268,6 +271,25 @@ const n = (v: Record<string, string>, key: string) => Number(v[key]);
 const num = (label: string, key: string, unit: string, placeholder: string, extra: Partial<Field> = {}): Field => ({ label, key, unit, placeholder, type: "number", step: "any", ...extra });
 const sexField: Field = { key: "sex", label: "Sexo biológico", type: "select", options: [{ label: "Masculino", value: "m" }, { label: "Femenino", value: "f" }] };
 const yesNo = (label: string, key: string): Field => ({ key, label, type: "select", options: [{ label: "No", value: "no" }, { label: "Sí", value: "yes" }] });
+
+const whoBmiAgeReferences: Record<"m" | "f", Map<number, WhoBmiAgeLms>> = {
+  m: new Map(WHO_BMI_AGE_BOYS.map((row) => [row[0], row])),
+  f: new Map(WHO_BMI_AGE_GIRLS.map((row) => [row[0], row])),
+};
+
+function normalCdf(z: number) {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.sqrt(2);
+  const t = 1 / (1 + 0.3275911 * x);
+  const erf = sign * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x));
+  return (1 + erf) / 2;
+}
+
+function formatPercentile(percentile: number) {
+  if (percentile < 0.1) return "<0,1";
+  if (percentile > 99.9) return ">99,9";
+  return percentile.toFixed(1).replace(".", ",");
+}
 
 const steroidEquivalents = {
   hydrocortisone: { label: "Hidrocortisona", dose: 20, duration: "8–12 h" },
@@ -283,6 +305,32 @@ const steroidEquivalents = {
 const steroidOptions = Object.entries(steroidEquivalents).map(([value, item]) => ({ label: item.label, value }));
 
 const calculators: Record<string, CalcDefinition> = {
+  "Algoritmo de dosificación de antiveneno": {
+    title: "Algoritmo seguro de uso de antiveneno",
+    subtitle: "Indicación, dosis definida por el producto y reevaluación del envenenamiento por serpiente",
+    fields: [
+      { key: "identified", label: "Serpiente y antiveneno eficaz identificados", type: "select", options: [{ label: "No / incierto", value: "no" }, { label: "Sí, según protocolo local", value: "yes" }] },
+      num("Viales por dosis según ficha técnica o protocolo", "vials", "viales", "Ej.: 4", { min: 1, max: 100, step: "1", required: false }),
+      { key: "systemic", label: "Envenenamiento sistémico", type: "select", options: [{ label: "Sin signos sistémicos", value: "none" }, { label: "Hemostático: sangrado o coagulopatía", value: "hemostatic" }, { label: "Neurotóxico: ptosis, debilidad o parálisis", value: "neuro" }, { label: "Cardiovascular: hipotensión o shock", value: "shock" }, { label: "Miotóxico/renal: rabdomiólisis, oliguria o lesión renal", value: "renal" }] },
+      { key: "local", label: "Envenenamiento local", type: "select", options: [{ label: "Ausente o estable", value: "stable" }, { label: "Edema que progresa rápidamente", value: "rapid" }, { label: "Edema extenso, necrosis o compromiso de zona crítica", value: "severe" }] },
+      { key: "laboratory", label: "Laboratorio seriado", type: "select", options: [{ label: "Normal", value: "normal" }, { label: "No disponible o pendiente", value: "pending" }, { label: "Coagulopatía, trombocitopenia, hemólisis o CK elevada", value: "abnormal" }] },
+      { key: "previous", label: "Antiveneno previo y evolución", type: "select", options: [{ label: "No administrado", value: "none" }, { label: "Administrado, con respuesta", value: "response" }, { label: "Administrado, persiste o progresa el envenenamiento", value: "persistent" }, { label: "Reacción aguda durante la administración", value: "reaction" }] },
+    ],
+    calculate: (v) => {
+      const indicated = v.systemic !== "none" || v.local === "rapid" || v.local === "severe" || v.laboratory === "abnormal";
+      const dose = Number(v.vials);
+      if (v.previous === "reaction") return { value: "Reacción aguda", unit: "emergencia", interpretation: "Detén temporalmente la infusión y trata inmediatamente la anafilaxia conforme al protocolo de emergencias; adrenalina debe estar disponible antes de iniciar antiveneno. La decisión de reiniciar requiere supervisión experta y reevaluación riesgo–beneficio." };
+      if (v.identified !== "yes") return { value: indicated ? "Consulta toxicológica urgente" : "No dosificar", interpretation: `${indicated ? "Hay datos compatibles con envenenamiento que podrían requerir antiveneno, pero" : "Sin envenenamiento demostrado y"} no se ha confirmado un producto eficaz para la especie/región. No existe una dosis universal: identifica el antiveneno, contacta toxicología/centro de información toxicológica y sigue el protocolo local.` };
+      if (!Number.isFinite(dose) || dose < 1) return { value: "—", interpretation: "Ingresa la cantidad de viales indicada por la ficha técnica del antiveneno específico o por el protocolo local. La potencia varía entre productos y lotes." };
+      if (!indicated) return { value: "Observación estrecha", interpretation: "No hay criterios actuales de envenenamiento sistémico o local grave. No administres antiveneno de forma profiláctica; realiza examen y laboratorio seriados durante el período definido por el protocolo local." };
+      if (v.previous === "persistent") return { value: dose.toFixed(0), unit: "viales para reevaluar/repetir", interpretation: "Persiste o progresa el envenenamiento tras la dosis inicial. Repite únicamente la dosis prevista por la ficha técnica/protocolo del producto y reevalúa respuesta clínica y laboratorio; solicita apoyo toxicológico. En mordedura de serpiente, la dosis de antiveneno no se reduce por ser un niño." };
+      if (v.previous === "response") return { value: "Respuesta presente", interpretation: "Continúa monitorización clínica y de laboratorio. No repitas automáticamente: algunos síndromes requieren nuevas dosis solo si reaparecen o persisten manifestaciones, conforme al producto y protocolo local." };
+      return { value: dose.toFixed(0), unit: "viales iniciales", interpretation: "Criterios compatibles con indicación de antiveneno. Administra exclusivamente el producto confirmado, por vía y velocidad indicadas en su ficha/protocolo, con capacidad de tratar anafilaxia y monitorización estrecha. La dosis se basa en la cantidad de veneno a neutralizar, no en el peso corporal." };
+    },
+    formula: "dosis = viales especificados por producto/protocolo; repetir solo según respuesta y guía local",
+    source: "OPS/OMS — diagnóstico y tratamiento del envenenamiento por serpientes en América Latina y el Caribe",
+    sourceUrl: "https://www.paho.org/es/documentos/diagnostico-tratamiento-envenenamiento-por-serpientes-america-latina-caribe",
+  },
   "Conversión de corticoides": {
     title: "Conversión de corticoides sistémicos",
     subtitle: "Equivalencia antiinflamatoria aproximada entre glucocorticoides",
@@ -312,6 +360,38 @@ const calculators: Record<string, CalcDefinition> = {
     title: "Índice de masa corporal", subtitle: "Clasificación de IMC en adultos", fields: [num("Peso", "weight", "kg", "70", { min: 1 }), num("Talla", "height", "cm", "170", { min: 30 })],
     calculate: (v) => { const bmi = n(v, "weight") / ((n(v, "height") / 100) ** 2); const interpretation = bmi < 18.5 ? "Bajo peso" : bmi < 25 ? "Rango saludable" : bmi < 30 ? "Sobrepeso" : bmi < 35 ? "Obesidad clase I" : bmi < 40 ? "Obesidad clase II" : "Obesidad clase III"; return { value: bmi.toFixed(1), unit: "kg/m²", interpretation }; },
     formula: "peso (kg) / talla² (m)", source: "CDC — cálculo e interpretación de IMC adulto", sourceUrl: "https://www.cdc.gov/bmi/es/adult-calculator/index.html",
+  },
+  "IMC para la edad (IMC/E)": {
+    title: "IMC para la edad (IMC/E)",
+    subtitle: "Puntuación z y percentil por edad y sexo, referencia OMS 2007 (5–19 años)",
+    fields: [
+      sexField,
+      num("Edad", "years", "años cumplidos", "10", { min: 5, max: 19, step: "1" }),
+      num("Meses adicionales", "months", "0–11", "0", { min: 0, max: 11, step: "1" }),
+      num("Peso", "weight", "kg", "32", { min: 1, max: 300, step: "0.01" }),
+      num("Talla", "height", "cm", "140", { min: 50, max: 230, step: "0.1" }),
+    ],
+    calculate: (v) => {
+      const ageMonths = n(v, "years") * 12 + n(v, "months");
+      if (!Number.isInteger(n(v, "years")) || !Number.isInteger(n(v, "months"))) return { value: "—", interpretation: "Ingresa la edad en años cumplidos y meses completos." };
+      const reference = (v.sex === "m" || v.sex === "f") ? whoBmiAgeReferences[v.sex].get(ageMonths) : undefined;
+      if (!reference) return { value: "—", interpretation: "La referencia OMS 2007 incorporada cubre de 5 años 1 mes (61 meses) a 19 años exactos (228 meses). Para menores de 5 años usa los estándares pediátricos apropiados y el protocolo local." };
+      const bmi = n(v, "weight") / ((n(v, "height") / 100) ** 2);
+      const [, l, median, s] = reference;
+      const z = (Math.pow(bmi / median, l) - 1) / (l * s);
+      const percentile = normalCdf(z) * 100;
+      const classification = z < -3 ? "Delgadez severa" : z < -2 ? "Delgadez" : z <= 1 ? "IMC adecuado para la edad" : z <= 2 ? "Sobrepeso" : "Obesidad";
+      const zLabel = `${z >= 0 ? "+" : ""}${z.toFixed(2).replace(".", ",")}`;
+      const ageLabel = `${v.years} años ${v.months} ${v.months === "1" ? "mes" : "meses"}`;
+      return {
+        value: bmi.toFixed(1),
+        unit: "kg/m²",
+        interpretation: `${classification} · z ${zLabel} · percentil ${formatPercentile(percentile)}. Referencia OMS 2007 para ${v.sex === "m" ? "sexo masculino" : "sexo femenino"}, ${ageLabel}. Interpreta la trayectoria en la curva, no una medición aislada.`,
+      };
+    },
+    formula: "IMC = peso/talla²; z = [(IMC/M)^L − 1] / (L × S)",
+    source: "OMS — referencia de IMC para la edad de 5 a 19 años (2007)",
+    sourceUrl: "https://www.who.int/toolkits/growth-reference-data-for-5to19-years/indicators/bmi-for-age",
   },
   "Superficie corporal (BSA)": {
     title: "Superficie corporal", subtitle: "Fórmula de Mosteller", fields: [num("Peso", "weight", "kg", "70", { min: 1 }), num("Talla", "height", "cm", "170", { min: 30 })],
@@ -1108,6 +1188,58 @@ const referenceDefinitions: Record<string, ReferenceDefinition> = {
   },
 };
 
+type ClinicalAuditReport = {
+  calculators: number;
+  scores: number;
+  references: number;
+  checklists: number;
+  failures: string[];
+};
+
+function auditClinicalDefinitions(): ClinicalAuditReport {
+  const failures: string[] = [];
+
+  for (const [name, definition] of Object.entries(calculators)) {
+    try {
+      const values = Object.fromEntries(definition.fields.map((field, index) => {
+        if (field.type === "select") return [field.key, field.options?.[0]?.value ?? ""];
+        if (field.type === "date") return [field.key, "2026-01-15"];
+        const placeholderValue = Number(String(field.placeholder ?? "").replace(",", "."));
+        if (Number.isFinite(placeholderValue) && String(field.placeholder ?? "").trim() !== "") return [field.key, String(placeholderValue)];
+        const lowerBound = Number.isFinite(field.min) ? Number(field.min) : 0;
+        const candidate = Math.max(lowerBound, index + 1);
+        return [field.key, String(candidate)];
+      }));
+      const result = definition.calculate(values);
+      if (!result || typeof result.value !== "string" || typeof result.interpretation !== "string" || /NaN|Infinity/.test(`${result.value} ${result.interpretation}`)) {
+        failures.push(`Calculadora «${name}»: resultado inválido`);
+      }
+    } catch (error) {
+      failures.push(`Calculadora «${name}»: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  for (const [name, definition] of Object.entries(scores)) {
+    try {
+      if (!definition.rows.length || definition.rows.some((row) => !row.options.length)) throw new Error("parámetros u opciones vacíos");
+      const sampleScore = definition.rows.reduce((total, row) => total + row.options[0].value, 0);
+      const interpretation = definition.interpret(sampleScore);
+      if (!interpretation || typeof interpretation !== "string") throw new Error("interpretación vacía");
+    } catch (error) {
+      failures.push(`Score «${name}»: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  for (const [name, definition] of Object.entries(referenceDefinitions)) {
+    if (!definition.columns.length || !definition.rows.length || definition.rows.some((row) => row.length !== definition.columns.length)) {
+      failures.push(`Tabla «${name}»: estructura de columnas o filas inválida`);
+    }
+  }
+
+  const checklists = tools.filter((tool) => !calculators[tool.name] && !scores[tool.name] && !referenceDefinitions[tool.name]).length;
+  return { calculators: Object.keys(calculators).length, scores: Object.keys(scores).length, references: Object.keys(referenceDefinitions).length, checklists, failures };
+}
+
 const tools: ClinicalTool[] = Object.entries(catalogSource).flatMap(([category, names]) =>
   names.map((name) => ({
     id: slugify(category + "-" + name),
@@ -1130,6 +1262,7 @@ const quickReference = [
 
 const kindLabels: Record<ToolKind, string> = { calculator: "Calculadora", score: "Score", reference: "Tabla", algorithm: "Algoritmo", guide: "Guía clínica" };
 const savePreference = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* Safari private mode or disabled storage */ } };
+const themeLabels: Record<ThemeMode, string> = { light: "Claro", dark: "Oscuro", auto: "Automático" };
 const categoryUtilities: Record<string, string> = {
   "Crecimiento": "apoyar la valoración antropométrica, nutricional o del desarrollo",
   "Conversiones": "convertir magnitudes sin cambiar su significado clínico",
@@ -1166,8 +1299,10 @@ export default function ClinicalApp() {
   const [selected, setSelected] = useState<ClinicalTool | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
-  const [dark, setDark] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("auto");
+  const [systemDark, setSystemDark] = useState(false);
   const [compact, setCompact] = useState(false);
+  const dark = themeMode === "dark" || (themeMode === "auto" && systemDark);
 
   useEffect(() => {
     let active = true;
@@ -1176,7 +1311,8 @@ export default function ClinicalApp() {
       try {
         setFavorites(JSON.parse(localStorage.getItem("calcmed-favorites") || "[]"));
         setRecent(JSON.parse(localStorage.getItem("calcmed-recent") || "[]"));
-        setDark(localStorage.getItem("calcmed-dark") === "true");
+        const storedTheme = localStorage.getItem("calcmed-theme");
+        setThemeMode(storedTheme === "light" || storedTheme === "dark" || storedTheme === "auto" ? storedTheme : localStorage.getItem("calcmed-dark") === "true" ? "dark" : "auto");
         setCompact(localStorage.getItem("calcmed-compact") === "true");
       } catch { /* local preferences are optional */ }
     });
@@ -1184,9 +1320,24 @@ export default function ClinicalApp() {
   }, []);
 
   useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemDark(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
-    savePreference("calcmed-dark", String(dark));
-  }, [dark]);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    savePreference("calcmed-theme", themeMode);
+  }, [dark, themeMode]);
+
+  useEffect(() => {
+    const report = auditClinicalDefinitions();
+    document.documentElement.dataset.clinicalAudit = JSON.stringify(report);
+    if (report.failures.length) console.error("Auditoría clínica de CalcMed", report);
+  }, []);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -1247,7 +1398,7 @@ export default function ClinicalApp() {
             {query && <button onClick={() => setQuery("")} aria-label="Limpiar búsqueda"><X size={16} /></button>}
           </div>
           <div className="top-actions">
-            <button className="icon-button" onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button>
+            <button className="icon-button" onClick={() => setThemeMode(dark ? "light" : "dark")} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} title={`Tema: ${themeLabels[themeMode]}`}>{dark ? <Sun size={19} /> : <Moon size={19} />}</button>
             <button className="avatar" onClick={() => go("settings")} aria-label="Preferencias">ML</button>
           </div>
         </div>
@@ -1291,8 +1442,8 @@ export default function ClinicalApp() {
               </div>
               <div className="hero-panel">
                 <div className="panel-top"><span><Stethoscope size={18} /> Acceso rápido</span><small>HOY</small></div>
-                <div className="mini-tool" onClick={() => openTool(tools.find((t) => t.name === "Índice de masa corporal (IMC)")!)}>
-                  <span className="mini-icon mint"><Activity size={20} /></span><div><strong>Índice de masa corporal</strong><small>Crecimiento · Calculadora</small></div><ChevronRight size={18} />
+                <div className="mini-tool" onClick={() => openTool(tools.find((t) => t.name === "IMC para la edad (IMC/E)")!)}>
+                  <span className="mini-icon mint"><Activity size={20} /></span><div><strong>IMC para la edad (IMC/E)</strong><small>Crecimiento pediátrico · OMS 2007</small></div><ChevronRight size={18} />
                 </div>
                 <div className="mini-tool" onClick={() => openTool(tools.find((t) => t.name === "Score APGAR")!)}>
                   <span className="mini-icon coral"><Baby size={20} /></span><div><strong>Score APGAR</strong><small>Neonatología · Score</small></div><ChevronRight size={18} />
@@ -1354,7 +1505,7 @@ export default function ClinicalApp() {
           <section className="settings-page">
             <span className="kicker">PREFERENCIAS</span><h1>Tu espacio clínico</h1><p className="settings-lead">Ajusta la experiencia en este dispositivo. No almacenamos información de pacientes ni enviamos datos a servidores externos.</p>
             <div className="settings-grid">
-              <div className="settings-card"><div><Moon size={20} /><span><strong>Tema oscuro</strong><small>Reduce el brillo en entornos con poca luz.</small></span></div><button className={"switch " + (dark ? "on" : "")} onClick={() => setDark(!dark)} aria-pressed={dark}><span /></button></div>
+              <div className="settings-card theme-card"><div><Moon size={20} /><span><strong>Apariencia</strong><small>Claro, oscuro o según la configuración del dispositivo.</small></span></div><div className="theme-options" role="group" aria-label="Modo de apariencia">{(["light", "dark", "auto"] as ThemeMode[]).map((mode) => <button key={mode} className={themeMode === mode ? "selected" : ""} onClick={() => setThemeMode(mode)} aria-pressed={themeMode === mode}>{themeLabels[mode]}</button>)}</div></div>
               <div className="settings-card"><div><ListFilter size={20} /><span><strong>Vista compacta</strong><small>Muestra más herramientas por pantalla.</small></span></div><button className={"switch " + (compact ? "on" : "")} onClick={() => { setCompact(!compact); savePreference("calcmed-compact", String(!compact)); }} aria-pressed={compact}><span /></button></div>
               <div className="settings-card"><div><Star size={20} /><span><strong>Favoritos guardados</strong><small>{favorites.length} herramientas en este dispositivo.</small></span></div><button className="text-button" onClick={() => { setFavorites([]); savePreference("calcmed-favorites", "[]"); }}>Vaciar</button></div>
               <div className="settings-card"><div><Clock3 size={20} /><span><strong>Historial reciente</strong><small>{recent.length} herramientas recientes.</small></span></div><button className="text-button" onClick={() => { setRecent([]); savePreference("calcmed-recent", "[]"); }}>Vaciar</button></div>
@@ -1395,7 +1546,7 @@ function ToolCard({ tool, favorite, onOpen, onFavorite }: { tool: ClinicalTool; 
 }
 
 function ToolRow({ tool, favorite, onOpen, onFavorite }: { tool: ClinicalTool; favorite: boolean; onOpen: () => void; onFavorite: () => void }) {
-  return <article className="tool-row" onClick={onOpen}><ToolGlyph tool={tool} /><div className="tool-row-copy"><h3>{tool.name}</h3><p><span>{kindLabels[tool.kind]}</span> · {tool.category}</p></div>{calculators[tool.name] || scores[tool.name] ? <span className="ready-badge">Interactiva</span> : referenceDefinitions[tool.name] ? <span className="table-badge">Tabla clínica</span> : <span className="guide-badge">Guía</span>}<button className={favorite ? "favorite active" : "favorite"} onClick={(e) => { e.stopPropagation(); onFavorite(); }} aria-label="Marcar favorito"><Star size={17} fill={favorite ? "currentColor" : "none"} /></button><ChevronRight className="row-arrow" size={18} /></article>;
+  return <article className="tool-row" onClick={onOpen}><ToolGlyph tool={tool} /><div className="tool-row-copy"><h3>{tool.name}</h3><p><span>{kindLabels[tool.kind]}</span> · {tool.category}</p></div>{calculators[tool.name] || scores[tool.name] ? <span className="ready-badge">Interactiva</span> : referenceDefinitions[tool.name] ? <span className="table-badge">Tabla clínica</span> : <span className="guide-badge">Checklist</span>}<button className={favorite ? "favorite active" : "favorite"} onClick={(e) => { e.stopPropagation(); onFavorite(); }} aria-label="Marcar favorito"><Star size={17} fill={favorite ? "currentColor" : "none"} /></button><ChevronRight className="row-arrow" size={18} /></article>;
 }
 
 function ToolSheet({ tool, favorite, onFavorite, onClose }: { tool: ClinicalTool; favorite: boolean; onFavorite: () => void; onClose: () => void }) {
@@ -1410,9 +1561,10 @@ function ToolSheet({ tool, favorite, onFavorite, onClose }: { tool: ClinicalTool
 
   const calculate = () => {
     if (!definition) return;
-    const required = definition.fields.every((field) => values[field.key] !== undefined && values[field.key] !== "");
+    const required = definition.fields.every((field) => field.required === false || (values[field.key] !== undefined && values[field.key] !== ""));
     if (!required) { setResult({ value: "—", interpretation: "Completa todos los campos para calcular." }); return; }
     const valid = definition.fields.every((field) => {
+      if (field.required === false && (values[field.key] === undefined || values[field.key] === "")) return true;
       if (field.type === "select") return field.options?.some((option) => option.value === values[field.key]);
       if (field.type === "date") return !Number.isNaN(new Date(values[field.key] + "T12:00:00").getTime());
       const value = Number(values[field.key]);
@@ -1451,7 +1603,6 @@ function ToolSheet({ tool, favorite, onFavorite, onClose }: { tool: ClinicalTool
         </>}
 
         {!definition && !scoreDefinition && <ReferencePanel tool={tool} />}
-        <div className="clinical-warning"><CircleHelp size={19} /><p><strong>Ayuda a la decisión, no decisión automática.</strong> Verifica población aplicable, unidades y datos de entrada. Ante discordancia, prioriza evaluación clínica y protocolos institucionales.</p></div>
       </div>
     </section>
   </div>;
@@ -1463,6 +1614,8 @@ function ExplanationCard({ meaning, utility }: { meaning: string; utility: strin
 
 function ReferencePanel({ tool }: { tool: ClinicalTool }) {
   const reference = referenceDefinitions[tool.name];
+  const [checks, setChecks] = useState<boolean[]>([false, false, false, false, false]);
+  const [notes, setNotes] = useState("");
   if (reference) return <>
     <div className="tool-intro"><BookOpen size={21} /><div><strong>{reference.title}</strong><p>{reference.subtitle}</p></div></div>
     <div className="clinical-table-wrap"><table className="clinical-table"><thead><tr>{reference.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{reference.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div>
@@ -1470,10 +1623,21 @@ function ReferencePanel({ tool }: { tool: ClinicalTool }) {
     <div className="guide-steps"><h4>Interpretación segura</h4><ul>{reference.notes.map((note) => <li key={note}>{note}</li>)}</ul></div>
     <div className="formula-card"><span>FUENTE</span><p>{reference.sourceUrl ? <a href={reference.sourceUrl} target="_blank" rel="noreferrer">{reference.source}</a> : reference.source}</p></div>
   </>;
+  const checklist = [
+    `Confirmé que la población, edad y objetivo corresponden a «${tool.name}».`,
+    `Reuní los parámetros clínicos necesarios y verifiqué sus unidades o definiciones.`,
+    `Contrasté hallazgos positivos, negativos y señales de alarma relevantes para ${tool.category}.`,
+    `Revisé limitaciones, exclusiones y la versión vigente de la guía o protocolo institucional.`,
+    `Documenté la conclusión, conducta, responsable y momento de reevaluación.`,
+  ];
+  const completed = checks.filter(Boolean).length;
   return <>
-    <div className="tool-intro"><BookOpen size={21} /><div><strong>Ficha clínica estructurada</strong><p>{kindLabels[tool.kind]} de {tool.category}</p></div></div>
-    <div className="guide-hero"><div className="guide-symbol"><ToolGlyph tool={tool} /></div><span>CONSULTA RÁPIDA</span><h3>{tool.name}</h3><p>Esta entrada forma parte del catálogo fidedigno de la referencia. Su aplicación exacta depende de población, versión de la guía y contexto asistencial.</p></div>
-    <div className="guide-grid"><div><span>TIPO</span><strong>{kindLabels[tool.kind]}</strong></div><div><span>ÁREA</span><strong>{tool.category}</strong></div><div><span>USO</span><strong>Apoyo clínico</strong></div><div><span>VALIDACIÓN</span><strong>Protocolo local</strong></div></div>
-    <div className="guide-steps"><h4>Antes de utilizarla</h4><ol><li>Confirma que la edad y población del paciente coincidan con la herramienta.</li><li>Revisa la versión y los criterios vigentes de tu institución.</li><li>Documenta componentes y hallazgos, no solo la puntuación final.</li></ol></div>
+    <div className="tool-intro"><ListFilter size={21} /><div><strong>Checklist clínico interactivo</strong><p>{kindLabels[tool.kind]} de {tool.category}</p></div></div>
+    <div className="guide-hero"><div className="guide-symbol"><ToolGlyph tool={tool} /></div><span>APLICACIÓN ESTRUCTURADA</span><h3>{tool.name}</h3><p>Completa cada etapa y registra los hallazgos. Esta guía no inventa una puntuación cuando la referencia original no define una fórmula universal.</p></div>
+    <div className="checklist-progress"><div><span>PROGRESO</span><strong>{completed}/5</strong></div><div className="progress-track"><span style={{ width: `${completed * 20}%` }} /></div><p>{completed === 5 ? "Checklist completo: revisa y documenta la decisión clínica." : "Completa los pasos pendientes antes de cerrar la evaluación."}</p></div>
+    <div className="functional-checklist">{checklist.map((item, index) => <button key={item} className={checks[index] ? "checked" : ""} onClick={() => setChecks(checks.map((value, itemIndex) => itemIndex === index ? !value : value))} aria-pressed={checks[index]}><span>{checks[index] ? "✓" : index + 1}</span><p>{item}</p></button>)}</div>
+    <label className="clinical-notes"><span>HALLAZGOS Y PLAN (solo en este dispositivo; no se guarda)</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Resume parámetros, hallazgos, conducta y reevaluación…" rows={4} /></label>
+    <div className="checklist-actions"><button className="text-button" onClick={() => { setChecks([false, false, false, false, false]); setNotes(""); }}>Reiniciar</button><strong>{notes.trim() ? "Notas registradas" : "Sin notas"}</strong></div>
+    <ExplanationCard meaning={`${tool.name} se presenta como una secuencia verificable de aplicación clínica, sin atribuir una puntuación o dosis que la referencia no define de forma universal.`} utility={`Sirve para ${categoryUtilities[tool.category] || "apoyar una valoración clínica estructurada"}, reducir omisiones y dejar explícitos los datos que sustentan la conducta.`} />
   </>;
 }
