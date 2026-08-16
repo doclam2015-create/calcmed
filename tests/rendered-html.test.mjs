@@ -40,15 +40,17 @@ test("renderiza CalcMed con metadatos en español", async () => {
 test("incluye manifiesto, service worker e identidad de la PWA", async () => {
   const [layout, manifest, serviceWorker, clinicalApp] = await Promise.all([
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
+    readFile(new URL("../app/manifest.ts", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/clinical-app.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(layout, /applicationName: "CalcMed"/);
   assert.match(layout, /appleWebApp/);
-  assert.equal(JSON.parse(manifest).name, "CalcMed");
-  assert.match(serviceWorker, /calcmed-v3/);
+  assert.match(manifest, /name: "CalcMed"/);
+  assert.match(manifest, /display: "standalone"/);
+  assert.match(serviceWorker, /calcmed-v5/);
+  assert.match(serviceWorker, /SKIP_WAITING/);
   assert.match(serviceWorker, /event\.request\.mode === "navigate"/);
   assert.match(clinicalApp, /process\.env\.NODE_ENV === "production"/);
   assert.match(clinicalApp, /serviceWorker\.register\("\/sw\.js", \{ updateViaCache: "none" \}\)/);
@@ -68,8 +70,10 @@ test("explica el significado y la utilidad después de cada resultado clínico",
   assert.match(clinicalApp, /\{result && <>.*?<ExplanationCard/s);
   assert.match(clinicalApp, /\{scoreComplete && <ExplanationCard/);
   assert.match(clinicalApp, /if \(reference\) return <>.*?<ExplanationCard/s);
-  assert.match(clinicalApp, /Checklist clínico interactivo/);
-  assert.match(clinicalApp, /functional-checklist/);
+  assert.match(clinicalApp, /Definición en validación/);
+  assert.match(clinicalApp, /Un checklist genérico podría producir una falsa sensación de validez/);
+  assert.match(clinicalApp, /herramientas aún no tienen una definición clínica propia validada/);
+  assert.doesNotMatch(clinicalApp, /Checklist clínico interactivo/);
   assert.doesNotMatch(clinicalApp, /Ficha clínica estructurada/);
 });
 
