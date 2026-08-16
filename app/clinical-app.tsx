@@ -31,6 +31,13 @@ import {
   Zap,
 } from "lucide-react";
 import { WHO_BMI_AGE_BOYS, WHO_BMI_AGE_GIRLS, type WhoBmiAgeLms } from "./who-bmi-age-data";
+import {
+  WHO_HEAD_BOYS, WHO_HEAD_GIRLS,
+  WHO_HEIGHT_BOYS_0_5, WHO_HEIGHT_BOYS_5_19, WHO_HEIGHT_GIRLS_0_5, WHO_HEIGHT_GIRLS_5_19,
+  WHO_WEIGHT_BOYS_0_5, WHO_WEIGHT_BOYS_5_10, WHO_WEIGHT_GIRLS_0_5, WHO_WEIGHT_GIRLS_5_10,
+  type WhoGrowthLms,
+} from "./who-growth-data";
+import { extendedCalculators, extendedReferences, extendedScores } from "./extended-clinical-definitions";
 
 type ToolKind = "calculator" | "score" | "reference" | "algorithm" | "guide";
 type Screen = "home" | "catalog" | "favorites" | "settings";
@@ -291,6 +298,70 @@ function formatPercentile(percentile: number) {
   return percentile.toFixed(1).replace(".", ",");
 }
 
+const whoGrowthReferences = {
+  head: {
+    m: new Map(WHO_HEAD_BOYS.map((row) => [row[0], row])),
+    f: new Map(WHO_HEAD_GIRLS.map((row) => [row[0], row])),
+  },
+  height: {
+    m: new Map([...WHO_HEIGHT_BOYS_0_5, ...WHO_HEIGHT_BOYS_5_19].map((row) => [row[0], row])),
+    f: new Map([...WHO_HEIGHT_GIRLS_0_5, ...WHO_HEIGHT_GIRLS_5_19].map((row) => [row[0], row])),
+  },
+  weight: {
+    m: new Map([...WHO_WEIGHT_BOYS_0_5, ...WHO_WEIGHT_BOYS_5_10].map((row) => [row[0], row])),
+    f: new Map([...WHO_WEIGHT_GIRLS_0_5, ...WHO_WEIGHT_GIRLS_5_10].map((row) => [row[0], row])),
+  },
+} satisfies Record<string, Record<"m" | "f", Map<number, WhoGrowthLms>>>;
+
+function lmsZScore(value: number, row: WhoGrowthLms) {
+  const [, l, median, s] = row;
+  return Math.abs(l) < 1e-9 ? Math.log(value / median) / s : (Math.pow(value / median, l) - 1) / (l * s);
+}
+
+function growthDefinition(config: {
+  title: string;
+  subtitle: string;
+  indicator: "head" | "height" | "weight";
+  valueLabel: string;
+  valueKey: string;
+  unit: string;
+  placeholder: string;
+  maxMonths: number;
+  sourceUrl: string;
+}): CalcDefinition {
+  return {
+    title: config.title,
+    subtitle: config.subtitle,
+    fields: [
+      sexField,
+      num("Edad", "years", "años cumplidos", "4", { min: 0, max: Math.floor(config.maxMonths / 12), step: "1" }),
+      num("Meses adicionales", "months", "0–11", "0", { min: 0, max: 11, step: "1" }),
+      num(config.valueLabel, config.valueKey, config.unit, config.placeholder, { min: 0.1, step: "0.1" }),
+    ],
+    calculate: (v) => {
+      const years = n(v, "years");
+      const months = n(v, "months");
+      const ageMonths = years * 12 + months;
+      const value = n(v, config.valueKey);
+      if (!Number.isInteger(years) || !Number.isInteger(months) || months < 0 || months > 11) return { value: "—", interpretation: "Ingresa años cumplidos y meses completos." };
+      if ((v.sex !== "m" && v.sex !== "f") || ageMonths < 0 || ageMonths > config.maxMonths) return { value: "—", interpretation: `Esta referencia cubre de 0 a ${Math.floor(config.maxMonths / 12)} años${config.maxMonths % 12 ? ` y ${config.maxMonths % 12} meses` : ""}.` };
+      const row = whoGrowthReferences[config.indicator][v.sex].get(ageMonths);
+      if (!row || !Number.isFinite(value) || value <= 0) return { value: "—", interpretation: "No se encontró una referencia válida para los datos ingresados." };
+      const z = lmsZScore(value, row);
+      const percentile = normalCdf(z) * 100;
+      const classification = z < -3 ? "Muy por debajo de la referencia" : z < -2 ? "Por debajo de la referencia" : z <= 2 ? "Dentro de ±2 DE" : z <= 3 ? "Por encima de la referencia" : "Muy por encima de la referencia";
+      return {
+        value: `${z >= 0 ? "+" : ""}${z.toFixed(2).replace(".", ",")}`,
+        unit: "DE (z)",
+        interpretation: `${classification} · percentil ${formatPercentile(percentile)} · mediana OMS ${row[2].toFixed(1).replace(".", ",")} ${config.unit}. Evalúa la trayectoria con mediciones seriadas y técnica estandarizada.`,
+      };
+    },
+    formula: "z = [(medición/M)^L − 1] / (L × S)",
+    source: `OMS — ${config.subtitle}`,
+    sourceUrl: config.sourceUrl,
+  };
+}
+
 const steroidEquivalents = {
   hydrocortisone: { label: "Hidrocortisona", dose: 20, duration: "8–12 h" },
   cortisone: { label: "Cortisona", dose: 25, duration: "8–12 h" },
@@ -330,6 +401,39 @@ const calculators: Record<string, CalcDefinition> = {
     formula: "dosis = viales especificados por producto/protocolo; repetir solo según respuesta y guía local",
     source: "OPS/OMS — diagnóstico y tratamiento del envenenamiento por serpientes en América Latina y el Caribe",
     sourceUrl: "https://www.paho.org/es/documentos/diagnostico-tratamiento-envenenamiento-por-serpientes-america-latina-caribe",
+  },
+  "Circunferencia cefálica": growthDefinition({
+    title: "Circunferencia cefálica para la edad",
+    subtitle: "estándar de circunferencia cefálica para la edad de 0 a 5 años",
+    indicator: "head", valueLabel: "Circunferencia cefálica", valueKey: "head", unit: "cm", placeholder: "45", maxMonths: 60,
+    sourceUrl: "https://www.who.int/tools/child-growth-standards/standards/head-circumference-for-age",
+  }),
+  "Talla": growthDefinition({
+    title: "Longitud/talla para la edad",
+    subtitle: "estándares 0–5 años y referencia de talla para la edad 5–19 años",
+    indicator: "height", valueLabel: "Longitud o talla", valueKey: "height", unit: "cm", placeholder: "105", maxMonths: 228,
+    sourceUrl: "https://www.who.int/tools/growth-reference-data-for-5to19-years/indicators/height-for-age",
+  }),
+  "Peso": growthDefinition({
+    title: "Peso para la edad",
+    subtitle: "estándar de peso para la edad 0–5 años y referencia 5–10 años",
+    indicator: "weight", valueLabel: "Peso", valueKey: "weight", unit: "kg", placeholder: "18", maxMonths: 120,
+    sourceUrl: "https://www.who.int/tools/growth-reference-data-for-5to19-years/indicators/weight-for-age-5to10-years",
+  }),
+  "Predicción de talla": {
+    title: "Talla adulta esperada por talla parental",
+    subtitle: "Método de talla media parental según sexo del niño",
+    fields: [sexField, num("Talla de la madre", "mother", "cm", "165", { min: 100, max: 230 }), num("Talla del padre", "father", "cm", "178", { min: 100, max: 230 })],
+    calculate: (v) => {
+      const mother = n(v, "mother");
+      const father = n(v, "father");
+      const target = v.sex === "m" ? (father + mother + 13) / 2 : v.sex === "f" ? (father + mother - 13) / 2 : NaN;
+      if (!Number.isFinite(target)) return { value: "—", interpretation: "Selecciona el sexo e ingresa ambas tallas parentales medidas." };
+      return { value: target.toFixed(1), unit: "cm", interpretation: `Intervalo diana aproximado: ${(target - 10.2).toFixed(1)}–${(target + 10.2).toFixed(1)} cm (±10,2 cm). Es una estimación poblacional; la predicción con edad ósea puede ser más precisa.` };
+    },
+    formula: "niño: (padre + madre + 13)/2; niña: (padre + madre − 13)/2",
+    source: "American Academy of Pediatrics — Mid-Parental Height",
+    sourceUrl: "https://eqipp.aap.org/courses/growth2/mn/clinical-guide/popups/mid-parental-height",
   },
   "Conversión de corticoides": {
     title: "Conversión de corticoides sistémicos",
@@ -797,6 +901,185 @@ const calculators: Record<string, CalcDefinition> = {
   },
 };
 
+Object.assign(calculators, {
+  "TFG por fórmula de Schwartz actualizada": calculators["TFG por Schwartz actualizada"],
+  "TFG por Schwartz": calculators["Aclaramiento de creatinina (Schwartz)"],
+  "Gasometría arterial": {
+    title: "Interpretación de gasometría arterial",
+    subtitle: "Trastorno primario y compensación respiratoria/metabólica esperada",
+    fields: [num("pH", "ph", "", "7.40", { min: 6.5, max: 8 }), num("PaCO₂", "pco2", "mmHg", "40", { min: 1 }), num("HCO₃⁻", "hco3", "mmol/L", "24", { min: 1 })],
+    calculate: (v: Record<string, string>) => {
+      const ph = n(v, "ph"); const pco2 = n(v, "pco2"); const hco3 = n(v, "hco3");
+      if (![ph, pco2, hco3].every(Number.isFinite)) return { value: "—", interpretation: "Ingresa los tres valores de la misma muestra." };
+      let primary = "Sin acidemia ni alcalemia manifiesta";
+      let compensation = "Evalúa trastornos mixtos con el contexto y electrolitos.";
+      if (ph < 7.35 && hco3 < 22) { const expected = 1.5 * hco3 + 8; primary = "Acidosis metabólica"; compensation = `PaCO₂ esperada por Winter: ${expected.toFixed(1)} ±2 mmHg; medida ${pco2.toFixed(1)}.`; }
+      else if (ph > 7.45 && hco3 > 26) { const expected = 40 + 0.7 * (hco3 - 24); primary = "Alcalosis metabólica"; compensation = `PaCO₂ compensatoria aproximada: ${expected.toFixed(1)} ±5 mmHg; medida ${pco2.toFixed(1)}.`; }
+      else if (ph < 7.35 && pco2 > 45) { primary = "Acidosis respiratoria"; compensation = "Compara HCO₃⁻ con duración aguda o crónica y antecedentes."; }
+      else if (ph > 7.45 && pco2 < 35) { primary = "Alcalosis respiratoria"; compensation = "Compara HCO₃⁻ con duración aguda o crónica y antecedentes."; }
+      else if ((ph < 7.35 && pco2 < 35) || (ph > 7.45 && pco2 > 45)) { primary = "Trastorno mixto probable"; compensation = "Los cambios de PaCO₂ y pH no siguen una compensación simple."; }
+      return { value: primary, interpretation: compensation };
+    },
+    formula: "Winter: PaCO₂ esperada = 1,5 × HCO₃⁻ + 8 ±2",
+    source: "NCBI Bookshelf — evaluación de trastornos ácido–base",
+    sourceUrl: "https://www.ncbi.nlm.nih.gov/books/NBK482146/",
+  },
+  "Índices predictivos para destete": {
+    title: "Índice de respiración rápida y superficial (RSBI)",
+    subtitle: "Frecuencia respiratoria dividida por volumen corriente espontáneo",
+    fields: [num("Frecuencia respiratoria", "rr", "resp/min", "24", { min: 1 }), num("Volumen corriente espontáneo", "vt", "mL", "400", { min: 1 })],
+    calculate: (v: Record<string, string>) => { const rsbi = n(v, "rr") / (n(v, "vt") / 1000); return { value: rsbi.toFixed(0), unit: "resp/min/L", interpretation: rsbi <= 105 ? "≤105: compatible con mayor probabilidad de tolerar liberación en el estudio original; no reemplaza una prueba de respiración espontánea." : ">105: asociado a menor probabilidad de liberación en el estudio original; corrige causas reversibles y reevalúa." }; },
+    formula: "RSBI = frecuencia respiratoria / volumen corriente (L)",
+    source: "AARC 2024 — guía de pruebas de respiración espontánea",
+    sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC11285503/",
+  },
+  "Presión arterial": {
+    title: "Parámetros derivados de presión arterial",
+    subtitle: "Presión arterial media y presión de pulso",
+    fields: [num("Presión sistólica", "sbp", "mmHg", "120", { min: 1 }), num("Presión diastólica", "dbp", "mmHg", "70", { min: 1 })],
+    calculate: (v: Record<string, string>) => { const sbp = n(v, "sbp"); const dbp = n(v, "dbp"); if (sbp < dbp) return { value: "—", interpretation: "La presión sistólica no puede ser menor que la diastólica." }; const map = (sbp + 2 * dbp) / 3; return { value: map.toFixed(0), unit: "mmHg (PAM)", interpretation: `Presión de pulso: ${(sbp - dbp).toFixed(0)} mmHg. La clasificación depende de edad, embarazo, comorbilidad y condiciones de medición.` }; },
+    formula: "PAM ≈ (PAS + 2×PAD)/3; presión de pulso = PAS−PAD",
+    source: "Cálculos hemodinámicos convencionales",
+  },
+  "Score BMQ (Breakpoint to MIC Quotient)": {
+    title: "Breakpoint-to-MIC Quotient (BMQ)",
+    subtitle: "Cociente entre punto de corte susceptible y concentración inhibitoria mínima",
+    fields: [num("Punto de corte susceptible", "breakpoint", "mg/L", "2", { min: 0.0001 }), num("MIC del aislamiento", "mic", "mg/L", "0.25", { min: 0.0001 })],
+    calculate: (v: Record<string, string>) => { const value = n(v, "breakpoint") / n(v, "mic"); return { value: value.toFixed(2), unit: "BMQ", interpretation: "Un cociente mayor indica una MIC más alejada por debajo del punto de corte. Es un parámetro experimental adicional y no sustituye categoría S/I/R, PK/PD, foco ni antibiograma completo." }; },
+    formula: "BMQ = punto de corte susceptible / MIC",
+    source: "Grillon et al., International Journal of Antimicrobial Agents (2019)",
+    sourceUrl: "https://doi.org/10.1016/j.ijantimicag.2019.01.013",
+  },
+  "Calculadora de razón de eficacia": {
+    title: "Eficacia relativa",
+    subtitle: "Reducción relativa del riesgo entre grupo intervención y control",
+    fields: [num("Eventos en intervención", "eventsTreatment", "", "10", { min: 0 }), num("Total en intervención", "totalTreatment", "", "100", { min: 1 }), num("Eventos en control", "eventsControl", "", "20", { min: 0 }), num("Total en control", "totalControl", "", "100", { min: 1 })],
+    calculate: (v: Record<string, string>) => { const rt = n(v, "eventsTreatment") / n(v, "totalTreatment"); const rc = n(v, "eventsControl") / n(v, "totalControl"); if (rt > 1 || rc <= 0 || rc > 1) return { value: "—", interpretation: "Revisa eventos y denominadores; el riesgo control debe ser mayor que cero." }; const rr = rt / rc; return { value: ((1 - rr) * 100).toFixed(1), unit: "%", interpretation: `Riesgo intervención ${(rt * 100).toFixed(1)}% · control ${(rc * 100).toFixed(1)}% · RR ${rr.toFixed(2)}. Añade intervalos de confianza para inferencia.` }; },
+    formula: "eficacia = (1 − riesgo intervención/riesgo control) × 100",
+    source: "CDC — principios de efectividad/eficacia vacunal",
+    sourceUrl: "https://www.cdc.gov/csels/dsepd/ss1978/lesson3/section6.html",
+  },
+  "Fórmula de fármacos de emergencia": {
+    title: "Volumen de una dosis basada en peso",
+    subtitle: "Convierte una dosis prescrita en volumen administrable",
+    fields: [num("Peso", "weight", "kg", "12", { min: 0.1 }), num("Dosis prescrita", "dose", "mg/kg", "0.1", { min: 0 }), num("Concentración disponible", "concentration", "mg/mL", "1", { min: 0.000001 }), num("Dosis máxima", "maxDose", "mg (opcional)", "", { min: 0, required: false })],
+    calculate: (v: Record<string, string>) => { const calculated = n(v, "weight") * n(v, "dose"); const maxDose = Number(v.maxDose); const actual = Number.isFinite(maxDose) && maxDose > 0 ? Math.min(calculated, maxDose) : calculated; const volume = actual / n(v, "concentration"); return { value: volume.toFixed(volume < 1 ? 3 : 2), unit: "mL", interpretation: `Dosis calculada ${calculated.toFixed(2)} mg${actual !== calculated ? `; limitada a ${actual.toFixed(2)} mg` : ""}. Verifica fármaco, indicación, concentración final, vía y dosis máxima del protocolo de reanimación aplicable.` }; },
+    formula: "volumen = (peso × dosis mg/kg, limitado por máximo) / concentración mg/mL",
+    source: "Conversión dimensional; la dosis debe proceder de un protocolo farmacológico vigente",
+  },
+  "Determinación del grupo sanguíneo": {
+    title: "Interpretación directa ABO/RhD",
+    subtitle: "Patrón de aglutinación con antisueros anti-A, anti-B y anti-D",
+    fields: [yesNo("Aglutinación con anti-A", "antiA"), yesNo("Aglutinación con anti-B", "antiB"), yesNo("Aglutinación con anti-D", "antiD")],
+    calculate: (v: Record<string, string>) => { const abo = v.antiA === "yes" && v.antiB === "yes" ? "AB" : v.antiA === "yes" ? "A" : v.antiB === "yes" ? "B" : "O"; const rh = v.antiD === "yes" ? "+" : "−"; return { value: `${abo}${rh}`, interpretation: "Interpretación del tipaje directo. Antes de transfusión se requiere identificación, controles, tipaje inverso cuando corresponda, pesquisa de anticuerpos y compatibilidad según banco de sangre." }; },
+    formula: "anti-A+/anti-B−→A; anti-A−/anti-B+→B; ambos+→AB; ambos−→O; anti-D define RhD",
+    source: "Canadian Blood Services — ABO compatibility and testing",
+    sourceUrl: "https://professionaleducation.blood.ca/en/transfusion/clinical-guide/pre-transfusion-testing",
+  },
+  "Recambio parcial por policitemia neonatal": {
+    title: "Volumen de recambio parcial neonatal",
+    subtitle: "Estimación para reducir hematocrito venoso en policitemia",
+    fields: [num("Peso", "weight", "kg", "3.2", { min: 0.3 }), num("Volumen sanguíneo estimado", "bloodVolume", "mL/kg", "85", { min: 50, max: 120 }), num("Hematocrito observado", "observed", "%", "70", { min: 1, max: 100 }), num("Hematocrito deseado", "target", "%", "55", { min: 1, max: 100 })],
+    calculate: (v: Record<string, string>) => { const observed = n(v, "observed"); const target = n(v, "target"); if (target >= observed) return { value: "—", interpretation: "El hematocrito deseado debe ser menor que el observado." }; const volume = n(v, "bloodVolume") * n(v, "weight") * (observed - target) / observed; return { value: volume.toFixed(1), unit: "mL", interpretation: `Equivale a ${(volume / n(v, "weight")).toFixed(1)} mL/kg. Confirmar hematocrito venoso, indicación, solución y alícuotas con protocolo neonatal.` }; },
+    formula: "volumen = volemia (mL/kg) × peso × (Hto observado−Hto deseado)/Hto observado",
+    source: "Recommendations for transfusion therapy in neonatology",
+    sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC4607607/",
+  },
+  "PELD": {
+    title: "PELD vigente con creatinina",
+    subtitle: "Pediatric End-Stage Liver Disease para candidatos menores de 12 años",
+    fields: [num("Edad", "age", "años decimales", "4", { min: 0, max: 11.99 }), num("Albúmina", "albumin", "g/dL", "2.5", { min: 0.1 }), num("Bilirrubina total", "bilirubin", "mg/dL", "3", { min: 0.1 }), num("INR", "inr", "", "1.8", { min: 0.1 }), num("Menor z de talla o peso CDC", "z", "DE", "-2.5", { min: -10, max: 10 }), num("Creatinina", "creatinine", "mg/dL", "0.6", { min: 0.01 }), yesNo("Diálisis ≥2 veces o CVVHD 24 h en la última semana", "dialysis")],
+    calculate: (v: Record<string, string>) => {
+      const age = n(v, "age"); if (age >= 12) return { value: "—", interpretation: "PELD se aplica a candidatos menores de 12 años; desde los 12 años se usa MELD conforme a OPTN." };
+      const albumin = Math.max(1, n(v, "albumin")); const bilirubin = Math.max(1, n(v, "bilirubin")); const inr = Math.max(1, n(v, "inr"));
+      const ageTerm = -0.1967 * (age < 1 ? 1 : Math.min(age, 5.5));
+      const albuminTerm = -1.842 * Math.log(Math.min(albumin, 1.9));
+      const bilirubinTerm = bilirubin <= 4 ? 0.7854 * Math.log(bilirubin) + 0.3434 * Math.log(4) : 0.7854 * Math.log(4) + 0.3434 * Math.log(Math.min(bilirubin, 40));
+      const inrTerm = inr <= 2 ? 1.981 * Math.log(inr) + 0.7298 * Math.log(2) : 1.981 * Math.log(2) + 0.7298 * Math.log(Math.min(inr, 10));
+      const zTerm = -0.1807 * Math.max(-5, Math.min(n(v, "z"), -2.1));
+      const creatinine = v.dialysis === "yes" ? 1.3 : Math.max(0.2, Math.min(n(v, "creatinine"), 1.3));
+      const score = (ageTerm + albuminTerm + bilirubinTerm + inrTerm + zTerm + 1.453 * Math.log(creatinine) + 1.5287) * 10 + 2.82;
+      return { value: Math.round(score).toString(), unit: "puntos PELD", interpretation: "Cálculo matemático conforme a OPTN. Para asignación real, use los valores, fechas, z CDC y reglas de diálisis del sistema oficial de trasplante." };
+    },
+    formula: "PELD = (suma de términos OPTN + 1,5287)×10 + 2,82",
+    source: "OPTN/HRSA — PELD Calculator y Policy 9.1.E",
+    sourceUrl: "https://www.hrsa.gov/optn/data-calculators/allocation-calculators/peld-calculator",
+  },
+  "Dosis de inmunoglobulina anti-D por hemorragia materno-fetal": {
+    title: "Dosis de inmunoglobulina anti-D",
+    subtitle: "Estimación desde porcentaje de eritrocitos fetales o volumen de hemorragia",
+    fields: [num("Eritrocitos fetales", "fetalPercent", "% (opcional)", "", { min: 0, max: 100, required: false }), num("Volumen sanguíneo materno", "maternalVolume", "mL", "5000", { min: 1000 }), num("Volumen fetal total conocido", "directVolume", "mL (opcional)", "", { min: 0, required: false })],
+    calculate: (v: Record<string, string>) => { const hasDirect = v.directVolume?.trim() !== ""; const hasPercent = v.fetalPercent?.trim() !== ""; if (!hasDirect && !hasPercent) return { value: "—", interpretation: "Ingresa el porcentaje fetal o un volumen de hemorragia fetomaterna." }; const direct = Number(v.directVolume); const percent = Number(v.fetalPercent); const volume = hasDirect && Number.isFinite(direct) && direct > 0 ? direct : hasPercent && Number.isFinite(percent) && percent >= 0 ? percent / 100 * n(v, "maternalVolume") : NaN; if (!Number.isFinite(volume) || volume <= 0) return { value: "—", interpretation: "Ingresa un porcentaje o volumen mayor que cero y revisa la volemia materna." }; const quotient = volume / 30; const base = quotient % 1 < 0.5 ? Math.floor(quotient) : Math.ceil(quotient); const vials = Math.max(1, base + 1); return { value: vials.toString(), unit: "viales de 300 µg", interpretation: `Hemorragia fetal estimada ${volume.toFixed(1)} mL de sangre total. Cada dosis de 300 µg cubre hasta 30 mL; confirma método, política del banco de sangre y dosis efectivamente disponible.` }; },
+    formula: "% células fetales × volemia materna = mL; mL/30 = viales, con redondeo de seguridad",
+    source: "Canadian practice review y ficha FDA de inmunoglobulina Rh(D)",
+    sourceUrl: "https://pmc.ncbi.nlm.nih.gov/articles/PMC12436229/",
+  },
+  "Colocación de catéter arterial umbilical": {
+    title: "Longitud inicial estimada de catéter arterial umbilical",
+    subtitle: "Fórmulas de Shukla y Wright basadas en peso de nacimiento",
+    fields: [num("Peso de nacimiento", "weight", "kg", "2.5", { min: 0.3, max: 6 })],
+    calculate: (v: Record<string, string>) => { const w = n(v, "weight"); const shukla = 3 * w + 9; const wright = 4 * w + 7; return { value: shukla.toFixed(1), unit: "cm (Shukla)", interpretation: `Wright: ${wright.toFixed(1)} cm. Son longitudes iniciales; la posición alta objetivo debe confirmarse por imagen antes del uso.` }; },
+    formula: "Shukla: 3×peso+9; Wright: 4×peso+7",
+    source: "NCBI Bookshelf — Umbilical Artery Catheterization",
+    sourceUrl: "https://www.ncbi.nlm.nih.gov/books/NBK559111/",
+  },
+  "Colocación de catéter venoso umbilical": {
+    title: "Longitud inicial estimada de catéter venoso umbilical",
+    subtitle: "Fórmula de Shukla–Ferrara basada en peso de nacimiento",
+    fields: [num("Peso de nacimiento", "weight", "kg", "2.5", { min: 0.3, max: 6 })],
+    calculate: (v: Record<string, string>) => { const value = (3 * n(v, "weight") + 9) / 2 + 1; return { value: value.toFixed(1), unit: "cm", interpretation: "Estimación inicial. Ninguna fórmula garantiza posición correcta; confirma la punta con el método de imagen establecido antes de infundir." }; },
+    formula: "UVC = (3×peso+9)/2 + 1",
+    source: "Revisión de procedimientos neonatales — Shukla–Ferrara",
+    sourceUrl: "https://onlinelibrary.wiley.com/doi/10.1155/2023/3241607",
+  },
+  "Dosis de crioprecipitado para reposición de fibrinógeno": {
+    title: "Volumen de crioprecipitado",
+    subtitle: "Conversión de una dosis protocolizada en mL/kg a volumen total",
+    fields: [num("Peso", "weight", "kg", "20", { min: 0.3 }), num("Dosis indicada por protocolo", "dose", "mL/kg", "10", { min: 1, max: 20 })],
+    calculate: (v: Record<string, string>) => { const volume = n(v, "weight") * n(v, "dose"); return { value: volume.toFixed(0), unit: "mL", interpretation: `Dosis ${n(v, "dose").toFixed(1)} mL/kg. El contenido de fibrinógeno por unidad varía; confirma objetivo, producto, unidades/pool y control posinfusión con banco de sangre.` }; },
+    formula: "volumen total = peso × dosis mL/kg",
+    source: "British Society for Haematology — transfusión de componentes en neonatos y niños",
+    sourceUrl: "https://b-s-h.org.uk/guidelines/guidelines/transfusion-for-fetuses-neonates-and-older-children",
+  },
+} satisfies Record<string, CalcDefinition>);
+
+Object.assign(calculators, {
+  "Score APACHE II": {
+    title: "APACHE II",
+    subtitle: "Severidad fisiológica adulta en UCI con los peores valores de las primeras 24 horas",
+    fields: [
+      num("Edad", "age", "años", "55", { min: 18, max: 120 }), num("Temperatura rectal/central", "temperature", "°C", "37", { min: 20, max: 45 }),
+      num("Presión arterial media", "map", "mmHg", "80", { min: 0, max: 250 }), num("Frecuencia cardíaca", "heartRate", "lpm", "90", { min: 0, max: 350 }),
+      num("Frecuencia respiratoria", "respRate", "resp/min", "18", { min: 0, max: 100 }), num("pH arterial", "ph", "", "7.40", { min: 6.5, max: 8.5 }),
+      num("Sodio", "sodium", "mmol/L", "140", { min: 80, max: 220 }), num("Potasio", "potassium", "mmol/L", "4", { min: 1, max: 10 }),
+      num("Creatinina", "creatinine", "mg/dL", "1", { min: 0.1, max: 40 }), yesNo("Insuficiencia renal aguda", "acuteRenal"),
+      num("Hematocrito", "hematocrit", "%", "40", { min: 1, max: 80 }), num("Leucocitos", "wbc", "×10⁹/L", "8", { min: 0.1, max: 500 }),
+      num("Glasgow", "gcs", "3–15", "15", { min: 3, max: 15 }),
+      { key: "oxygen", label: "Oxigenación: si FiO₂ <0,50 usa PaO₂; si ≥0,50 usa gradiente A–a", type: "select", options: [{ label: "0: PaO₂ ≥70 o A–a <200 mmHg", value: "0" }, { label: "1: PaO₂ 61–70 mmHg", value: "1" }, { label: "2: A–a 200–349 mmHg", value: "2" }, { label: "3: PaO₂ 55–60 o A–a 350–499", value: "3" }, { label: "4: PaO₂ <55 o A–a ≥500", value: "4" }] },
+      { key: "chronic", label: "Puntos de salud crónica del APACHE II", type: "select", options: [{ label: "0: sin criterio", value: "0" }, { label: "2: posoperatorio electivo con insuficiencia orgánica grave/inmunocompromiso", value: "2" }, { label: "5: no operado o posoperatorio urgente con ese criterio", value: "5" }] },
+    ],
+    calculate: (v: Record<string, string>) => {
+      const band = (x: number, ranges: Array<[number, number, number]>) => ranges.find(([min, max]) => x >= min && x < max)?.[2] ?? 0;
+      const age = band(n(v, "age"), [[18, 45, 0], [45, 55, 2], [55, 65, 3], [65, 75, 5], [75, Infinity, 6]]);
+      const temp = band(n(v, "temperature"), [[-Infinity, 30, 4], [30, 32, 3], [32, 34, 2], [34, 36, 1], [36, 38.5, 0], [38.5, 39, 1], [39, 41, 3], [41, Infinity, 4]]);
+      const map = band(n(v, "map"), [[-Infinity, 50, 4], [50, 70, 2], [70, 110, 0], [110, 130, 2], [130, 160, 3], [160, Infinity, 4]]);
+      const hr = band(n(v, "heartRate"), [[-Infinity, 40, 4], [40, 55, 3], [55, 70, 2], [70, 140, 0], [140, 180, 3], [180, Infinity, 4]]);
+      const rr = band(n(v, "respRate"), [[-Infinity, 6, 4], [6, 10, 2], [10, 12, 1], [12, 25, 0], [25, 35, 1], [35, 50, 3], [50, Infinity, 4]]);
+      const ph = band(n(v, "ph"), [[-Infinity, 7.15, 4], [7.15, 7.25, 3], [7.25, 7.33, 2], [7.33, 7.5, 0], [7.5, 7.6, 1], [7.6, 7.7, 3], [7.7, Infinity, 4]]);
+      const sodium = band(n(v, "sodium"), [[-Infinity, 111, 4], [111, 120, 3], [120, 130, 2], [130, 150, 0], [150, 155, 1], [155, 160, 2], [160, 180, 3], [180, Infinity, 4]]);
+      const potassium = band(n(v, "potassium"), [[-Infinity, 2.5, 4], [2.5, 3, 2], [3, 3.5, 1], [3.5, 5.5, 0], [5.5, 6, 1], [6, 7, 3], [7, Infinity, 4]]);
+      let creatinine = band(n(v, "creatinine"), [[-Infinity, 0.6, 2], [0.6, 1.5, 0], [1.5, 2, 2], [2, 3.5, 3], [3.5, Infinity, 4]]); if (v.acuteRenal === "yes") creatinine *= 2;
+      const hematocrit = band(n(v, "hematocrit"), [[-Infinity, 20, 4], [20, 30, 2], [30, 46, 0], [46, 50, 1], [50, 60, 2], [60, Infinity, 4]]);
+      const wbc = band(n(v, "wbc"), [[-Infinity, 1, 4], [1, 3, 2], [3, 15, 0], [15, 40, 1], [40, Infinity, 4]]);
+      const neurologic = 15 - n(v, "gcs"); const score = age + temp + map + hr + rr + ph + sodium + potassium + creatinine + hematocrit + wbc + neurologic + Number(v.oxygen) + Number(v.chronic);
+      return { value: score.toFixed(0), unit: "puntos APACHE II", interpretation: "Una puntuación mayor se asocia con mayor gravedad en cohortes adultas de UCI. No conviertas el total en mortalidad individual sin diagnóstico de ingreso y modelo validado; no es un score pediátrico." };
+    },
+    formula: "fisiología aguda (12 variables) + edad + salud crónica; Glasgow aporta 15−GCS",
+    source: "Knaus et al. — APACHE II original",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/3928249/",
+  },
+} satisfies Record<string, CalcDefinition>);
+
 const scores: Record<string, ScoreDefinition> = {
   "Score APGAR": {
     title: "Score APGAR", subtitle: "Evaluación del recién nacido a 1 y 5 minutos",
@@ -1086,6 +1369,202 @@ const scores: Record<string, ScoreDefinition> = {
   },
 };
 
+const zeroToFive = [0, 1, 2, 3, 4, 5].map((value) => ({ label: String(value), value }));
+const absentPresent = (points: number) => [{ label: "Ausente", value: 0 }, { label: "Presente", value: points }];
+
+Object.assign(scores, {
+  "Criterios RIFLE para lesión renal aguda": {
+    title: "Clasificación RIFLE",
+    subtitle: "Gravedad de lesión renal por el peor criterio de función o diuresis",
+    rows: [{ key: "stage", label: "Selecciona el peor criterio que cumple el paciente", options: [
+      { label: "Sin criterio RIFLE", value: 0 },
+      { label: "Riesgo: creatinina 1,5–2×, TFG ↓25% o diuresis <0,5 mL/kg/h por 6 h", value: 1 },
+      { label: "Lesión: creatinina >2–3×, TFG ↓50% o diuresis <0,5 mL/kg/h por 12 h", value: 2 },
+      { label: "Falla: creatinina >3×/≥4 mg/dL con aumento agudo, TFG ↓75%, diuresis <0,3 por 24 h o anuria 12 h", value: 3 },
+      { label: "Pérdida: falla renal persistente >4 semanas", value: 4 },
+      { label: "Enfermedad terminal: persistencia >3 meses", value: 5 },
+    ] }],
+    interpret: (s: number) => ["No cumple RIFLE con los datos seleccionados.", "RIFLE-R: riesgo.", "RIFLE-I: lesión.", "RIFLE-F: falla (FO si el criterio es oliguria).", "RIFLE-L: pérdida persistente.", "RIFLE-E: enfermedad renal terminal."][s] ?? "Revisa la selección.",
+    source: "Bellomo et al. — consenso ADQI/RIFLE",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/15312219/",
+  },
+  "Pediatric Early Warning Score (PEWS)": {
+    title: "PEWS original de Monaghan",
+    subtitle: "Detección de deterioro pediátrico hospitalario; use el protocolo de respuesta local",
+    rows: [
+      { key: "behavior", label: "Conducta", options: [{ label: "Juega/apropiado", value: 0 }, { label: "Duerme", value: 1 }, { label: "Irritable", value: 2 }, { label: "Letárgico, confuso o respuesta reducida al dolor", value: 3 }] },
+      { key: "cardio", label: "Cardiovascular", options: [{ label: "Rosado o relleno capilar 1–2 s", value: 0 }, { label: "Pálido o relleno 3 s", value: 1 }, { label: "Gris o relleno 4 s", value: 2 }, { label: "Gris/moteado o relleno ≥5 s", value: 3 }] },
+      { key: "resp", label: "Respiratorio", options: [{ label: "\u003e10 sobre rango, accesorios o O₂ ≥30%", value: 1 }, { label: "Dentro de rango, sin retracciones", value: 0 }, { label: "\u003e20 sobre rango, retracciones o O₂ ≥40%", value: 2 }, { label: "≥5 bajo rango, retracciones/gruñido u O₂ ≥50%", value: 3 }] },
+      { key: "nebulizer", label: "Nebulizaciones en 15 minutos", options: [{ label: "No", value: 0 }, { label: "Sí", value: 2 }] },
+      { key: "vomit", label: "Vómitos persistentes tras cirugía", options: [{ label: "No", value: 0 }, { label: "Sí", value: 2 }] },
+    ],
+    interpret: (s: number) => `PEWS ${s}. Una puntuación creciente indica mayor deterioro; el umbral de observación o escalamiento debe ser el de la versión y protocolo institucional.`,
+    source: "Monaghan A. Detecting and managing deterioration in children (2005)",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/15835467/",
+  },
+  "Criterios de Duke para endocarditis": {
+    title: "Duke–ISCVID 2023",
+    subtitle: "Clasificación clínica de endocarditis infecciosa por criterios mayores y menores",
+    rows: [
+      { key: "micro", label: "Criterio mayor microbiológico 2023", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "imaging", label: "Criterio mayor de imagen 2023", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "surgical", label: "Criterio mayor quirúrgico 2023", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "predisposition", label: "Menor: predisposición", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "fever", label: "Menor: fiebre documentada", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "vascular", label: "Menor: fenómenos vasculares", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "immune", label: "Menor: fenómenos inmunológicos", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "minorMicro", label: "Menor: evidencia microbiológica que no cumple mayor", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+    ],
+    interpret: (s: number) => { const major = Math.floor(s / 10); const minor = s % 10; return major >= 2 || (major >= 1 && minor >= 3) || minor >= 5 ? `Endocarditis clínica definitiva (${major} mayor/es, ${minor} menor/es).` : (major >= 1 && minor >= 1) || minor >= 3 ? `Endocarditis posible (${major} mayor/es, ${minor} menor/es).` : `No alcanza clasificación clínica Duke–ISCVID (${major} mayor/es, ${minor} menor/es); no excluye endocarditis.`; },
+    source: "Fowler et al. — criterios Duke–ISCVID 2023",
+    sourceUrl: "https://academic.oup.com/cid/article/77/4/518/7151107",
+  },
+  "Criterios de Jones para fiebre reumática": {
+    title: "Criterios de Jones revisados 2015",
+    subtitle: "Primer episodio de fiebre reumática; los umbrales menores dependen del riesgo poblacional",
+    rows: [
+      { key: "strep", label: "Evidencia de infección precedente por estreptococo A", options: [{ label: "No", value: 0 }, { label: "Sí", value: 100 }] },
+      { key: "carditis", label: "Mayor: carditis clínica o subclínica", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "arthritis", label: "Mayor: artritis según riesgo poblacional", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "chorea", label: "Mayor: corea", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "erythema", label: "Mayor: eritema marginado", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "nodules", label: "Mayor: nódulos subcutáneos", options: [{ label: "No", value: 0 }, { label: "Sí", value: 10 }] },
+      { key: "arthralgia", label: "Menor: artralgia según riesgo", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "fever", label: "Menor: fiebre según umbral de riesgo", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "inflammation", label: "Menor: VSG/PCR elevada según riesgo", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "pr", label: "Menor: PR prolongado (sin carditis como mayor)", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+    ],
+    interpret: (s: number) => { const strep = s >= 100; const rest = s % 100; const major = Math.floor(rest / 10); const minor = rest % 10; if (!strep) return `No clasificable como primer episodio por ausencia de evidencia estreptocócica (${major} mayor/es, ${minor} menor/es); existen excepciones clínicas que requieren especialista.`; return major >= 2 || (major >= 1 && minor >= 2) ? `Cumple combinación de Jones para primer episodio (${major} mayor/es, ${minor} menor/es) con evidencia estreptocócica.` : `No alcanza la combinación de Jones para primer episodio (${major} mayor/es, ${minor} menor/es).`; },
+    source: "American Heart Association — revisión de Jones 2015",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/25908771/",
+  },
+  "Criterios Dutch para hipercolesterolemia familiar": {
+    title: "Dutch Lipid Clinic Network (DLCN)",
+    subtitle: "Diagnóstico fenotípico de hipercolesterolemia familiar en adultos",
+    rows: [
+      { key: "family", label: "Historia familiar (el mayor aplicable)", options: [{ label: "Ninguna", value: 0 }, { label: "ECV prematura o LDL >p95 en familiar de primer grado", value: 1 }, { label: "Xantomas/arco en familiar o LDL >p95 en menor de 18", value: 2 }] },
+      { key: "clinical", label: "Historia clínica (el mayor aplicable)", options: [{ label: "Ninguna", value: 0 }, { label: "Enfermedad cerebral/periférica prematura", value: 1 }, { label: "Enfermedad coronaria prematura", value: 2 }] },
+      { key: "exam", label: "Examen físico (el mayor aplicable)", options: [{ label: "Ninguno", value: 0 }, { label: "Arco corneal antes de 45 años", value: 4 }, { label: "Xantomas tendinosos", value: 6 }] },
+      { key: "ldl", label: "LDL-C sin tratamiento", options: [{ label: "<155 mg/dL", value: 0 }, { label: "155–190 mg/dL", value: 1 }, { label: "191–250 mg/dL", value: 3 }, { label: "251–325 mg/dL", value: 5 }, { label: "≥326 mg/dL", value: 8 }] },
+      { key: "dna", label: "Mutación funcional LDLR, APOB o PCSK9", options: [{ label: "No demostrada", value: 0 }, { label: "Demostrada", value: 8 }] },
+    ],
+    interpret: (s: number) => s > 8 ? "Hipercolesterolemia familiar definida por DLCN." : s >= 6 ? "Hipercolesterolemia familiar probable por DLCN." : s >= 3 ? "Hipercolesterolemia familiar posible por DLCN." : "Hipercolesterolemia familiar improbable por DLCN; excluye causas secundarias y aplica contexto clínico.",
+    source: "ESC/EAS — criterios Dutch Lipid Clinic Network",
+    sourceUrl: "https://academic.oup.com/view-large/553227248",
+  },
+  "Criterios BRUE en lactantes": {
+    title: "BRUE: clasificación de menor riesgo AAP",
+    subtitle: "Aplicable solo después de confirmar un evento breve, resuelto e inexplicado en menor de 1 año",
+    rows: [
+      { key: "age", label: "Edad >60 días", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+      { key: "gestation", label: "Edad gestacional ≥32 semanas y corregida ≥45 semanas", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+      { key: "first", label: "Primer BRUE y no en racimo", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+      { key: "duration", label: "Duración <1 minuto", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+      { key: "cpr", label: "No requirió RCP por profesional entrenado", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+      { key: "history", label: "Historia sin hallazgos preocupantes", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+      { key: "exam", label: "Examen físico sin hallazgos preocupantes", options: [{ label: "Sí", value: 0 }, { label: "No", value: 1 }] },
+    ],
+    interpret: (s: number) => s === 0 ? "BRUE de menor riesgo según AAP, si la definición de BRUE ya fue confirmada. Aplicar recomendaciones AAP." : `No es BRUE de menor riesgo: ${s} criterio(s) de menor riesgo no cumplido(s). Requiere evaluación individualizada.`,
+    source: "American Academy of Pediatrics — guía BRUE",
+    sourceUrl: "https://publications.aap.org/pediatrics/article/137/5/e20160590/52195/",
+  },
+  "Instrumento NEXUS II pediátrico para decisión de TC de cráneo": {
+    title: "NEXUS Head CT pediátrico",
+    subtitle: "Clasificación de bajo riesgo tras traumatismo craneal cerrado en menores de 18 años",
+    rows: [
+      { key: "fracture", label: "Evidencia de fractura de cráneo", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "hematoma", label: "Hematoma de cuero cabelludo", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "deficit", label: "Déficit neurológico", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "alertness", label: "Nivel de alerta anormal", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "behavior", label: "Conducta anormal", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "coagulation", label: "Coagulopatía", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "vomiting", label: "Vómitos persistentes", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+    ],
+    interpret: (s: number) => s === 0 ? "Bajo riesgo por NEXUS pediátrico; la decisión de TC sigue dependiendo del contexto, observación y juicio clínico." : `No es de bajo riesgo: ${s} criterio(s) presente(s). Considera TC/observación según evaluación clínica y protocolo.`,
+    source: "Gupta et al. — validación pediátrica de NEXUS Head CT",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/29665151/",
+  },
+  "Riesgo VBAC para parto vaginal exitoso": {
+    title: "Score de Flamm para VBAC",
+    subtitle: "Puntuación clínica al ingreso; no reemplaza elegibilidad ni consentimiento obstétrico",
+    rows: [
+      { key: "age", label: "Edad materna", options: [{ label: "≥40 años", value: 0 }, { label: "<40 años", value: 2 }] },
+      { key: "vaginal", label: "Historia de parto vaginal", options: [{ label: "Ninguno", value: 0 }, { label: "Antes de la cesárea", value: 1 }, { label: "Después de la cesárea", value: 2 }, { label: "Antes y después", value: 4 }] },
+      { key: "reason", label: "Indicación de cesárea previa distinta de falta de progreso", options: [{ label: "No", value: 0 }, { label: "Sí", value: 1 }] },
+      { key: "effacement", label: "Borramiento cervical al ingreso", options: [{ label: "<25%", value: 0 }, { label: "25–75%", value: 1 }, { label: ">75%", value: 2 }] },
+      { key: "dilation", label: "Dilatación cervical al ingreso", options: [{ label: "<1 cm", value: 0 }, { label: "1–2 cm", value: 1 }, { label: "3 cm", value: 2 }, { label: "≥4 cm", value: 3 }] },
+    ],
+    interpret: (s: number) => `Flamm ${s}/12. Una puntuación mayor se asoció con mayor probabilidad de VBAC en la cohorte original; no equivale a una probabilidad individual ni reemplaza criterios de elegibilidad.`,
+    source: "Flamm & Geiger — antepartum clinical characteristics and VBAC",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/8020337/",
+  },
+  "Medida PRAM para exacerbación de asma": {
+    title: "Pediatric Respiratory Assessment Measure (PRAM)",
+    subtitle: "Severidad de exacerbación asmática de 2 a 17 años; repetir tras tratamiento",
+    rows: [
+      { key: "saturation", label: "Saturación de O₂", options: [{ label: "≥95%", value: 0 }, { label: "92–94%", value: 1 }, { label: "<92%", value: 2 }] },
+      { key: "suprasternal", label: "Retracción supraesternal", options: [{ label: "Ausente", value: 0 }, { label: "Presente", value: 2 }] },
+      { key: "scalene", label: "Contracción de escalenos", options: [{ label: "Ausente", value: 0 }, { label: "Presente", value: 2 }] },
+      { key: "air", label: "Entrada de aire (usa el lado peor)", options: [{ label: "Normal", value: 0 }, { label: "Disminuida en bases", value: 1 }, { label: "Disminución generalizada", value: 2 }, { label: "Mínima o ausente", value: 3 }] },
+      { key: "wheeze", label: "Sibilancias (usa el lado peor)", options: [{ label: "Ausentes", value: 0 }, { label: "Solo espiratorias", value: 1 }, { label: "Inspiratorias y espiratorias", value: 2 }, { label: "Audibles sin estetoscopio o tórax silente", value: 3 }] },
+    ],
+    interpret: (s: number) => s <= 3 ? "PRAM 0–3: exacerbación leve." : s <= 7 ? "PRAM 4–7: exacerbación moderada." : "PRAM 8–12: exacerbación grave; manejo urgente conforme a protocolo.",
+    source: "Ducharme et al. — validación PRAM de 2–17 años",
+    sourceUrl: "https://doi.org/10.1016/j.jpeds.2007.08.034",
+  },
+  "Score de severidad de asma pediátrica (PASS)": {
+    title: "Pediatric Asthma Severity Score (PASS)",
+    subtitle: "Score clínico de 0 a 6 para exacerbación asmática pediátrica",
+    rows: [
+      { key: "wheeze", label: "Sibilancias", options: [{ label: "Ninguna o al final de espiración", value: 0 }, { label: "Durante la espiración", value: 1 }, { label: "Inspiratorias y espiratorias o tórax silente", value: 2 }] },
+      { key: "work", label: "Trabajo respiratorio", options: [{ label: "Ninguno o leve", value: 0 }, { label: "Moderado", value: 1 }, { label: "Grave", value: 2 }] },
+      { key: "expiration", label: "Espiración prolongada", options: [{ label: "Normal", value: 0 }, { label: "Prolongada", value: 1 }, { label: "Marcadamente prolongada", value: 2 }] },
+    ],
+    interpret: (s: number) => `PASS ${s}/6. Una puntuación mayor representa mayor severidad clínica; use mediciones seriadas y el protocolo terapéutico local.`,
+    source: "Gorelick et al. — Pediatric Asthma Severity Score",
+    sourceUrl: "https://doi.org/10.1197/j.aem.2003.07.015",
+  },
+  "Reflux Symptom Index": {
+    title: "Reflux Symptom Index (RSI)",
+    subtitle: "Nueve síntomas autoinformados, de 0 (ninguno) a 5 (grave)",
+    rows: [
+      { key: "hoarse", label: "Ronquera o problema de voz", options: zeroToFive },
+      { key: "throat", label: "Carraspera", options: zeroToFive },
+      { key: "mucus", label: "Exceso de moco o goteo posnasal", options: zeroToFive },
+      { key: "swallow", label: "Dificultad para tragar", options: zeroToFive },
+      { key: "coughMeal", label: "Tos después de comer o al acostarse", options: zeroToFive },
+      { key: "breathing", label: "Episodios de tos o dificultad respiratoria", options: zeroToFive },
+      { key: "cough", label: "Tos molesta", options: zeroToFive },
+      { key: "globus", label: "Sensación de cuerpo extraño en garganta", options: zeroToFive },
+      { key: "heartburn", label: "Ardor/dolor torácico, indigestión o regurgitación", options: zeroToFive },
+    ],
+    interpret: (s: number) => s > 13 ? "RSI >13: resultado anormal en la validación original; no confirma por sí solo reflujo laringofaríngeo." : "RSI ≤13: dentro del umbral de referencia original; no excluye patología si persisten síntomas.",
+    source: "Belafsky et al. — validación del Reflux Symptom Index",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/12150380/",
+  },
+  "Índice SLEDAI": {
+    title: "SLEDAI original",
+    subtitle: "Actividad de lupus eritematoso sistémico en los 10 días previos; 24 descriptores ponderados",
+    rows: [
+      { key: "seizure", label: "Convulsión", options: absentPresent(8) }, { key: "psychosis", label: "Psicosis", options: absentPresent(8) },
+      { key: "organic", label: "Síndrome cerebral orgánico", options: absentPresent(8) }, { key: "visual", label: "Alteración visual", options: absentPresent(8) },
+      { key: "cranial", label: "Trastorno de nervios craneales", options: absentPresent(8) }, { key: "headache", label: "Cefalea lúpica", options: absentPresent(8) },
+      { key: "cva", label: "Accidente cerebrovascular", options: absentPresent(8) }, { key: "vasculitis", label: "Vasculitis", options: absentPresent(8) },
+      { key: "arthritis", label: "Artritis", options: absentPresent(4) }, { key: "myositis", label: "Miositis", options: absentPresent(4) },
+      { key: "casts", label: "Cilindros urinarios", options: absentPresent(4) }, { key: "hematuria", label: "Hematuria", options: absentPresent(4) },
+      { key: "proteinuria", label: "Proteinuria", options: absentPresent(4) }, { key: "pyuria", label: "Piuria", options: absentPresent(4) },
+      { key: "rash", label: "Erupción nueva", options: absentPresent(2) }, { key: "alopecia", label: "Alopecia nueva", options: absentPresent(2) },
+      { key: "mucosal", label: "Úlceras mucosas", options: absentPresent(2) }, { key: "pleurisy", label: "Pleuritis", options: absentPresent(2) },
+      { key: "pericarditis", label: "Pericarditis", options: absentPresent(2) }, { key: "complement", label: "Complemento bajo", options: absentPresent(2) },
+      { key: "dna", label: "Aumento de unión a ADN", options: absentPresent(2) }, { key: "fever", label: "Fiebre atribuible a LES", options: absentPresent(1) },
+      { key: "platelets", label: "Trombocitopenia", options: absentPresent(1) }, { key: "leukopenia", label: "Leucopenia", options: absentPresent(1) },
+    ],
+    interpret: (s: number) => s === 0 ? "SLEDAI 0: no se registran descriptores activos en esta evaluación." : `SLEDAI ${s}. Una puntuación mayor representa mayor actividad; documenta cada descriptor y compara con evaluaciones previas.`,
+    source: "Bombardier et al. — derivación original de SLEDAI",
+    sourceUrl: "https://pubmed.ncbi.nlm.nih.gov/1599520/",
+  },
+} satisfies Record<string, ScoreDefinition>);
+
 const referenceDefinitions: Record<string, ReferenceDefinition> = {
   "Valores normales de TFG": {
     title: "Categorías de filtración glomerular KDIGO",
@@ -1188,11 +1667,16 @@ const referenceDefinitions: Record<string, ReferenceDefinition> = {
   },
 };
 
+Object.assign(calculators, extendedCalculators);
+Object.assign(scores, extendedScores);
+Object.assign(referenceDefinitions, extendedReferences);
+
 type ClinicalAuditReport = {
   calculators: number;
   scores: number;
   references: number;
   checklists: number;
+  unresolvedNames: string[];
   failures: string[];
 };
 
@@ -1201,6 +1685,14 @@ function auditClinicalDefinitions(): ClinicalAuditReport {
 
   for (const [name, definition] of Object.entries(calculators)) {
     try {
+      if (!definition.title || !definition.subtitle || !definition.formula || !definition.source || !definition.fields.length) throw new Error("metadatos o parámetros incompletos");
+      const fieldKeys = definition.fields.map((field) => field.key);
+      if (new Set(fieldKeys).size !== fieldKeys.length) throw new Error("parámetros duplicados");
+      for (const field of definition.fields) {
+        if (!field.label || !field.key) throw new Error("parámetro sin nombre");
+        if (field.type === "select" && (!field.options?.length || field.options.some((option) => option.value === "" || !option.label))) throw new Error(`opciones incompletas en ${field.label}`);
+        if (field.min !== undefined && field.max !== undefined && field.min > field.max) throw new Error(`límites invertidos en ${field.label}`);
+      }
       const values = Object.fromEntries(definition.fields.map((field, index) => {
         if (field.type === "select") return [field.key, field.options?.[0]?.value ?? ""];
         if (field.type === "date") return [field.key, "2026-01-15"];
@@ -1214,6 +1706,15 @@ function auditClinicalDefinitions(): ClinicalAuditReport {
       if (!result || typeof result.value !== "string" || typeof result.interpretation !== "string" || /NaN|Infinity/.test(`${result.value} ${result.interpretation}`)) {
         failures.push(`Calculadora «${name}»: resultado inválido`);
       }
+      const alternateValues = Object.fromEntries(definition.fields.map((field, index) => {
+        if (field.type === "select") return [field.key, field.options?.at(-1)?.value ?? ""];
+        if (field.type === "date") return [field.key, "2026-08-16"];
+        if (field.max !== undefined && Number.isFinite(field.max)) return [field.key, String(field.max)];
+        if (field.min !== undefined && Number.isFinite(field.min)) return [field.key, String(Math.max(field.min, index + 2))];
+        return [field.key, String(index + 2)];
+      }));
+      const alternateResult = definition.calculate(alternateValues);
+      if (!alternateResult || typeof alternateResult.value !== "string" || !alternateResult.interpretation || /NaN|Infinity/.test(`${alternateResult.value} ${alternateResult.interpretation}`)) throw new Error("resultado alternativo inválido");
     } catch (error) {
       failures.push(`Calculadora «${name}»: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1221,23 +1722,28 @@ function auditClinicalDefinitions(): ClinicalAuditReport {
 
   for (const [name, definition] of Object.entries(scores)) {
     try {
-      if (!definition.rows.length || definition.rows.some((row) => !row.options.length)) throw new Error("parámetros u opciones vacíos");
+      if (!definition.title || !definition.subtitle || !definition.source || !definition.rows.length || definition.rows.some((row) => !row.label || !row.key || !row.options.length || row.options.some((option) => !option.label || !Number.isFinite(option.value)))) throw new Error("metadatos, parámetros u opciones vacíos");
+      if (new Set(definition.rows.map((row) => row.key)).size !== definition.rows.length) throw new Error("parámetros duplicados");
       const sampleScore = definition.rows.reduce((total, row) => total + row.options[0].value, 0);
       const interpretation = definition.interpret(sampleScore);
       if (!interpretation || typeof interpretation !== "string") throw new Error("interpretación vacía");
+      const maximumScore = definition.rows.reduce((total, row) => total + Math.max(...row.options.map((option) => option.value)), 0);
+      if (!definition.interpret(maximumScore)) throw new Error("interpretación máxima vacía");
     } catch (error) {
       failures.push(`Score «${name}»: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   for (const [name, definition] of Object.entries(referenceDefinitions)) {
-    if (!definition.columns.length || !definition.rows.length || definition.rows.some((row) => row.length !== definition.columns.length)) {
+    if (!definition.title || !definition.subtitle || !definition.source || !definition.columns.length || !definition.rows.length || definition.rows.some((row) => row.length !== definition.columns.length || row.some((cell) => !cell))) {
       failures.push(`Tabla «${name}»: estructura de columnas o filas inválida`);
     }
   }
 
-  const checklists = tools.filter((tool) => !calculators[tool.name] && !scores[tool.name] && !referenceDefinitions[tool.name]).length;
-  return { calculators: Object.keys(calculators).length, scores: Object.keys(scores).length, references: Object.keys(referenceDefinitions).length, checklists, failures };
+  const unresolvedNames = tools.filter((tool) => !calculators[tool.name] && !scores[tool.name] && !referenceDefinitions[tool.name]).map((tool) => tool.name);
+  const checklists = unresolvedNames.length;
+  if (checklists > 0) failures.push(`${checklists} herramientas aún no tienen una definición clínica propia validada`);
+  return { calculators: Object.keys(calculators).length, scores: Object.keys(scores).length, references: Object.keys(referenceDefinitions).length, checklists, unresolvedNames, failures };
 }
 
 const tools: ClinicalTool[] = Object.entries(catalogSource).flatMap(([category, names]) =>
@@ -1343,8 +1849,18 @@ export default function ClinicalApp() {
     if (!("serviceWorker" in navigator)) return;
     const isLocal = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
     if (process.env.NODE_ENV === "production" && !isLocal) {
-      navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => undefined);
-      return;
+      let reloading = false;
+      const onControllerChange = () => {
+        if (reloading) return;
+        reloading = true;
+        window.location.reload();
+      };
+      navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+      navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).then((registration) => {
+        registration.waiting?.postMessage({ type: "SKIP_WAITING" });
+        registration.update().catch(() => undefined);
+      }).catch(() => undefined);
+      return () => navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
     }
     navigator.serviceWorker.getRegistrations().then((registrations) => registrations.forEach((registration) => registration.unregister()));
     if ("caches" in window) caches.keys().then((keys) => keys.filter((key) => key.startsWith("calcmed-")).forEach((key) => caches.delete(key)));
@@ -1515,6 +2031,7 @@ export default function ClinicalApp() {
             <div className="sources-card">
               <span className="kicker">FUENTES INSTITUCIONALES</span><h2>Base clínica confiable</h2><p>Las herramientas interactivas muestran fórmula, alcance y advertencias. Para áreas que cambian con nuevas versiones, CalcMed enlaza a organismos y guías primarias.</p>
               <div><a href="https://www.cdc.gov/growth-chart-training/hcp/using-bmi/calculating-bmi.html" target="_blank" rel="noreferrer">CDC · IMC y crecimiento</a><a href="https://www.who.int/tools/child-growth-standards/standards" target="_blank" rel="noreferrer">OMS · Estándares de crecimiento</a><a href="https://www.acog.org/clinical/clinical-guidance/committee-opinion/articles/2015/10/the-apgar-score" target="_blank" rel="noreferrer">ACOG/AAP · APGAR</a><a href="https://kdigo.org/guidelines/ckd-evaluation-and-management/" target="_blank" rel="noreferrer">KDIGO · Guía ERC 2024</a><a href="https://www.aasld.org/practice-guidelines" target="_blank" rel="noreferrer">AASLD · Guías hepatológicas</a><a href="https://www.nice.org.uk/guidance/ng84/chapter/Recommendations" target="_blank" rel="noreferrer">NICE · Centor/FeverPAIN</a></div>
+              <p className="coverage-note"><strong>Referencias de cobertura:</strong> se contrastó el catálogo con MedCalX, EBMcalc Pediátrico, EBMcalc Total y MDCalc. Las fórmulas y parámetros de CalcMed se documentan con la publicación primaria o guía profesional correspondiente, no con texto propietario de esas aplicaciones.</p>
             </div>
           </section>
         )}
@@ -1546,7 +2063,7 @@ function ToolCard({ tool, favorite, onOpen, onFavorite }: { tool: ClinicalTool; 
 }
 
 function ToolRow({ tool, favorite, onOpen, onFavorite }: { tool: ClinicalTool; favorite: boolean; onOpen: () => void; onFavorite: () => void }) {
-  return <article className="tool-row" onClick={onOpen}><ToolGlyph tool={tool} /><div className="tool-row-copy"><h3>{tool.name}</h3><p><span>{kindLabels[tool.kind]}</span> · {tool.category}</p></div>{calculators[tool.name] || scores[tool.name] ? <span className="ready-badge">Interactiva</span> : referenceDefinitions[tool.name] ? <span className="table-badge">Tabla clínica</span> : <span className="guide-badge">Checklist</span>}<button className={favorite ? "favorite active" : "favorite"} onClick={(e) => { e.stopPropagation(); onFavorite(); }} aria-label="Marcar favorito"><Star size={17} fill={favorite ? "currentColor" : "none"} /></button><ChevronRight className="row-arrow" size={18} /></article>;
+  return <article className="tool-row" onClick={onOpen}><ToolGlyph tool={tool} /><div className="tool-row-copy"><h3>{tool.name}</h3><p><span>{kindLabels[tool.kind]}</span> · {tool.category}</p></div>{calculators[tool.name] || scores[tool.name] ? <span className="ready-badge">Interactiva</span> : referenceDefinitions[tool.name] ? <span className="table-badge">Tabla clínica</span> : <span className="guide-badge">En validación</span>}<button className={favorite ? "favorite active" : "favorite"} onClick={(e) => { e.stopPropagation(); onFavorite(); }} aria-label="Marcar favorito"><Star size={17} fill={favorite ? "currentColor" : "none"} /></button><ChevronRight className="row-arrow" size={18} /></article>;
 }
 
 function ToolSheet({ tool, favorite, onFavorite, onClose }: { tool: ClinicalTool; favorite: boolean; onFavorite: () => void; onClose: () => void }) {
@@ -1614,30 +2131,19 @@ function ExplanationCard({ meaning, utility }: { meaning: string; utility: strin
 
 function ReferencePanel({ tool }: { tool: ClinicalTool }) {
   const reference = referenceDefinitions[tool.name];
-  const [checks, setChecks] = useState<boolean[]>([false, false, false, false, false]);
-  const [notes, setNotes] = useState("");
+  const [selectedRow, setSelectedRow] = useState("");
   if (reference) return <>
     <div className="tool-intro"><BookOpen size={21} /><div><strong>{reference.title}</strong><p>{reference.subtitle}</p></div></div>
+    <div className="reference-selector"><label><span>CONSULTA INTERACTIVA</span><select value={selectedRow} onChange={(event) => setSelectedRow(event.target.value)}><option value="">Selecciona una fila de la tabla</option>{reference.rows.map((row, index) => <option key={index} value={String(index)}>{row[0]}</option>)}</select></label></div>
+    {selectedRow !== "" && reference.rows[Number(selectedRow)] && <div className="result-card"><span>RESULTADO SELECCIONADO</span><div><strong>{reference.rows[Number(selectedRow)][0]}</strong></div><p>{reference.columns.slice(1).map((column, index) => `${column}: ${reference.rows[Number(selectedRow)][index + 1]}`).join(" · ")}</p></div>}
     <div className="clinical-table-wrap"><table className="clinical-table"><thead><tr>{reference.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{reference.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div>
     <ExplanationCard meaning={`${reference.title} organiza ${reference.rows.length} filas de referencia para una consulta rápida y comparable.`} utility={`Sirve para ${categoryUtilities[tool.category] || "apoyar una valoración clínica estructurada"}; siempre prevalecen el intervalo, método o protocolo aplicable al paciente.`} />
     <div className="guide-steps"><h4>Interpretación segura</h4><ul>{reference.notes.map((note) => <li key={note}>{note}</li>)}</ul></div>
     <div className="formula-card"><span>FUENTE</span><p>{reference.sourceUrl ? <a href={reference.sourceUrl} target="_blank" rel="noreferrer">{reference.source}</a> : reference.source}</p></div>
   </>;
-  const checklist = [
-    `Confirmé que la población, edad y objetivo corresponden a «${tool.name}».`,
-    `Reuní los parámetros clínicos necesarios y verifiqué sus unidades o definiciones.`,
-    `Contrasté hallazgos positivos, negativos y señales de alarma relevantes para ${tool.category}.`,
-    `Revisé limitaciones, exclusiones y la versión vigente de la guía o protocolo institucional.`,
-    `Documenté la conclusión, conducta, responsable y momento de reevaluación.`,
-  ];
-  const completed = checks.filter(Boolean).length;
   return <>
-    <div className="tool-intro"><ListFilter size={21} /><div><strong>Checklist clínico interactivo</strong><p>{kindLabels[tool.kind]} de {tool.category}</p></div></div>
-    <div className="guide-hero"><div className="guide-symbol"><ToolGlyph tool={tool} /></div><span>APLICACIÓN ESTRUCTURADA</span><h3>{tool.name}</h3><p>Completa cada etapa y registra los hallazgos. Esta guía no inventa una puntuación cuando la referencia original no define una fórmula universal.</p></div>
-    <div className="checklist-progress"><div><span>PROGRESO</span><strong>{completed}/5</strong></div><div className="progress-track"><span style={{ width: `${completed * 20}%` }} /></div><p>{completed === 5 ? "Checklist completo: revisa y documenta la decisión clínica." : "Completa los pasos pendientes antes de cerrar la evaluación."}</p></div>
-    <div className="functional-checklist">{checklist.map((item, index) => <button key={item} className={checks[index] ? "checked" : ""} onClick={() => setChecks(checks.map((value, itemIndex) => itemIndex === index ? !value : value))} aria-pressed={checks[index]}><span>{checks[index] ? "✓" : index + 1}</span><p>{item}</p></button>)}</div>
-    <label className="clinical-notes"><span>HALLAZGOS Y PLAN (solo en este dispositivo; no se guarda)</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Resume parámetros, hallazgos, conducta y reevaluación…" rows={4} /></label>
-    <div className="checklist-actions"><button className="text-button" onClick={() => { setChecks([false, false, false, false, false]); setNotes(""); }}>Reiniciar</button><strong>{notes.trim() ? "Notas registradas" : "Sin notas"}</strong></div>
-    <ExplanationCard meaning={`${tool.name} se presenta como una secuencia verificable de aplicación clínica, sin atribuir una puntuación o dosis que la referencia no define de forma universal.`} utility={`Sirve para ${categoryUtilities[tool.category] || "apoyar una valoración clínica estructurada"}, reducir omisiones y dejar explícitos los datos que sustentan la conducta.`} />
+    <div className="tool-intro"><ShieldCheck size={21} /><div><strong>Definición en validación</strong><p>{kindLabels[tool.kind]} de {tool.category}</p></div></div>
+    <div className="guide-hero"><div className="guide-symbol"><ToolGlyph tool={tool} /></div><span>NO DISPONIBLE COMO CÁLCULO</span><h3>{tool.name}</h3><p>Esta herramienta no se presenta como calculadora ni score hasta incorporar sus parámetros, reglas, versión aplicable y fuente médica verificable. Un checklist genérico podría producir una falsa sensación de validez.</p></div>
+    <div className="formula-card"><span>ESTADO</span><p>Pendiente de validación clínica individual. No utilices esta entrada para una decisión asistencial.</p></div>
   </>;
 }
